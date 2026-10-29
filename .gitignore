@@ -1,0 +1,17 @@
+# macOS 系统文件
+.DS_Store
+
+# Xcode 个人设置和编译产物（每个人电脑上都不一样，不需要存）
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+# 工具日志（UML MCP 等）
+logs/
+
+# 打包产物（DMG）
+发布/
+
+# 别人项目的截图（设计参考，版权归原作者，不进仓库）
+设计/灵动岛参考/
