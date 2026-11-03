@@ -128,6 +128,8 @@ struct ReminderOverview: View {
             guard let value = text() else { return }
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(value, forType: .string)
+            // 接入配置包含本机 MCP 密钥，允许粘贴给 Agent，但不持久化到剪贴板历史。
+            NSPasteboard.general.setString("1", forType: ClipboardCapture.concealedType)
             copied = key
         }
         .buttonStyle(PillButtonStyle())

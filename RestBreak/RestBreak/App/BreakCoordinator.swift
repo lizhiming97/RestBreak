@@ -71,6 +71,8 @@ final class BreakCoordinator: ObservableObject {
     private let hotkeys = HotkeyManager()
     /// 截图和贴图
     let screenshots = ScreenshotController()
+    /// 剪贴板历史独立管理设置和存储，避免与休息调度耦合。
+    let clipboard: ClipboardCoordinator
     /// AI 派的提醒
     let reminders = ReminderCoordinator()
     /// 管家（AI 推送的出口、给 AI 的现状）
@@ -88,7 +90,8 @@ final class BreakCoordinator: ObservableObject {
     /// 离开状态下监听鼠标：人一回来就立刻 tick（放慢后最多要等 10 秒才发现）
     private var returnMonitor: Any?
 
-    init() {
+    init(clipboard: ClipboardCoordinator = ClipboardCoordinator()) {
+        self.clipboard = clipboard
         let settings = SettingsStore.load()
         self.settings = settings
         self.scheduler = BreakScheduler(settings: settings, now: Date())
@@ -128,6 +131,8 @@ final class BreakCoordinator: ObservableObject {
             self?.settings.annotationStyles[tool] = style
         }
         registerShortcuts()
+
+        clipboard.start()
 
         startTickLoop(immediate: false)
     }
@@ -334,6 +339,10 @@ final class BreakCoordinator: ObservableObject {
             screenshots.startCapture(settings: settings)
         case .pinClipboard:
             screenshots.pinClipboard(settings: settings)
+        case .clipboardHistory:
+            if case .onBreak = scheduler.state { return }
+            if isPreviewing { return }
+            clipboard.show()
         }
     }
 

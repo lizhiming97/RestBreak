@@ -7,6 +7,7 @@ enum ShortcutAction: String, Codable, CaseIterable, CodingKeyRepresentable, Send
     case skipNextBreak     // 跳过下一次休息（休息中则跳过当前这次）
     case captureScreen     // 截图
     case pinClipboard      // 把剪贴板内容贴到桌面
+    case clipboardHistory  // 查找之前复制过的文字和图片
 
     /// 截图相关的操作在设置「截图」页显示，其他在「快捷键」页
     var isScreenshot: Bool { self == .captureScreen || self == .pinClipboard }
@@ -18,6 +19,7 @@ enum ShortcutAction: String, Codable, CaseIterable, CodingKeyRepresentable, Send
         case .skipNextBreak: "跳过下一次休息"
         case .captureScreen: "截图"
         case .pinClipboard: "贴剪贴板"
+        case .clipboardHistory: "剪贴板历史"
         }
     }
 
@@ -28,6 +30,7 @@ enum ShortcutAction: String, Codable, CaseIterable, CodingKeyRepresentable, Send
         case .skipNextBreak: "休息中按下则跳过当前这次；严格模式下无效"
         case .captureScreen: "框选屏幕区域，复制、保存或贴到桌面"
         case .pinClipboard: "把剪贴板里的图片或文字贴到桌面"
+        case .clipboardHistory: "搜索、固定和取用之前复制的内容"
         }
     }
 }

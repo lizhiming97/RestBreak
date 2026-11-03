@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                             openSettings: { settingsWindow.show(page: $0) })
         coordinator.onUpdate = { [weak statusBar] in statusBar?.refresh() }
         coordinator.screenshots.onOpenSettings = { settingsWindow.show(page: .screenshot) }
+        coordinator.clipboard.onOpenSettings = { settingsWindow.show(page: .clipboard) }
         coordinator.reminders.onOpenPage = { settingsWindow.show(page: .reminders) }
         coordinator.start()
 
@@ -41,6 +42,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.flush()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let clipboard = coordinator?.clipboard else { return .terminateNow }
+        clipboard.stop()
+        Task {
+            await clipboard.store.flush()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 

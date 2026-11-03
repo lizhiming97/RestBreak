@@ -98,7 +98,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func checkShortcutKeys() {
         let flags = UInt(CGEventSource.flagsState(.combinedSessionState).rawValue) & KeyShortcut.allModifierFlags
         let shortcuts = coordinator.settings.shortcuts
-        let pressed = [ShortcutAction.captureScreen, .pinClipboard].first { action in
+        let pressed = [ShortcutAction.captureScreen, .pinClipboard, .clipboardHistory].first { action in
             guard let s = shortcuts[action] else { return false }
             return s.modifiers == flags && CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(s.keyCode))
         }
@@ -178,6 +178,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // 4. 设置 / 退出（开机自动启动在设置窗口「休息安排」里）
+        addItem("剪贴板历史…", #selector(showClipboard))
         addItem("设置…", #selector(showSettings), key: ",")
         menu.addItem(.separator())
         addItem("退出星期五", #selector(quit), key: "q")
@@ -241,6 +242,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         ]))
         return result
     }
+
+    @objc private func showClipboard() { coordinator.performShortcutFromMenu(.clipboardHistory) }
 
     private func menuItem(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)

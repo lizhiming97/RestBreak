@@ -134,6 +134,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case reminders = "提醒"
     case smart = "智能避让"
     case personal = "外观与快捷键"
+    case clipboard = "剪贴板"
     case screenshot = "截图"
 
     var id: Self { self }
@@ -145,6 +146,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .reminders: "bell"
         case .smart: "sparkles"
         case .personal: "paintpalette"
+        case .clipboard: "doc.on.clipboard"
         case .screenshot: "camera.viewfinder"
         }
     }
@@ -194,6 +196,7 @@ struct SettingsView: View {
                     case .reminders: RemindersPage()
                     case .smart: SmartPage()
                     case .personal: PersonalPage()
+                    case .clipboard: ClipboardSettingsPage()
                     case .screenshot: ScreenshotPage()
                     }
                 }
