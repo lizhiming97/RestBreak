@@ -129,13 +129,15 @@ final class SettingsNavigation: ObservableObject {
 }
 
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case stats = "统计"
-    case rest = "休息"
-    case reminders = "提醒"
-    case smart = "智能避让"
+    case stats = "休息统计"
+    case rest = "休息间隔"
+    case reminders = "Agent主动关怀"
+    case smart = "会议避让"
     case personal = "外观与快捷键"
-    case clipboard = "剪贴板"
+    case clipboard = "历史剪贴板"
     case screenshot = "截图"
+    case menuBar = "菜单栏收纳"
+    case mouse = "鼠标顺滑"
 
     var id: Self { self }
 
@@ -148,6 +150,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .personal: "paintpalette"
         case .clipboard: "doc.on.clipboard"
         case .screenshot: "camera.viewfinder"
+        case .menuBar: "tray.full"
+        case .mouse: "computermouse"
         }
     }
 }
@@ -194,10 +198,12 @@ struct SettingsView: View {
                     case .stats: StatsPage()
                     case .rest: RestPage()
                     case .reminders: RemindersPage()
+                    case .mouse: MouseCompanionPage()
                     case .smart: SmartPage()
                     case .personal: PersonalPage()
                     case .clipboard: ClipboardSettingsPage()
                     case .screenshot: ScreenshotPage()
+                    case .menuBar: MenuBarCompanionPage()
                     }
                 }
                 .padding(.horizontal, 20)
@@ -513,7 +519,9 @@ private struct SmartPage: View {
                 RowDivider()
                 SettingRow(title: coordinator.settings.focusApps.isEmpty ? "还没有添加 App" : "添加更多",
                            subtitle: "从正在运行的 App 中选择；想加的 App 没在列表里，先把它打开") {
-                    AddFocusAppMenu()
+                    AddFocusAppMenu(excluded: Set(coordinator.settings.focusApps.map(\.bundleID))) {
+                        coordinator.settings.focusApps.append($0)
+                    }
                 }
             }
             .disabled(!coordinator.settings.postponeDuringFocusApps)
@@ -718,7 +726,8 @@ private struct CalendarRow: View {
 }
 
 /// 指定 App 列表里的一行：图标 + 名字 + 删除按钮
-private struct FocusAppRow: View {
+/// 一行 App：图标 + 名字 + 移除按钮（智能避让、鼠标排除共用）
+struct FocusAppRow: View {
     let app: FocusApp
     let onRemove: () -> Void
 
@@ -745,9 +754,11 @@ private struct FocusAppRow: View {
     }
 }
 
-/// 「添加 App」按钮：点开列出正在运行、还没添加过的 App
-private struct AddFocusAppMenu: View {
-    @EnvironmentObject private var coordinator: BreakCoordinator
+/// 「添加 App」按钮：点开列出正在运行、还没添加过的 App（智能避让、鼠标排除共用）
+struct AddFocusAppMenu: View {
+    /// 已经添加过的 App，不再列出
+    let excluded: Set<String>
+    let onAdd: (FocusApp) -> Void
 
     var body: some View {
         Menu {
@@ -757,7 +768,7 @@ private struct AddFocusAppMenu: View {
             }
             ForEach(candidates, id: \.bundleID) { app in
                 Button {
-                    coordinator.settings.focusApps.append(app)
+                    onAdd(app)
                 } label: {
                     Label {
                         Text(app.name)
@@ -778,13 +789,12 @@ private struct AddFocusAppMenu: View {
 
     /// 正在运行的普通 App（有 Dock 图标的），去掉自己和已添加的，按名字排序
     private func runningApps() -> [FocusApp] {
-        let added = Set(coordinator.settings.focusApps.map(\.bundleID))
         let ownID = Bundle.main.bundleIdentifier
         var seen = Set<String>()
         return NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular }
             .compactMap { app -> FocusApp? in
-                guard let id = app.bundleIdentifier, id != ownID, !added.contains(id),
+                guard let id = app.bundleIdentifier, id != ownID, !excluded.contains(id),
                       seen.insert(id).inserted else { return nil }
                 return FocusApp(bundleID: id, name: app.localizedName ?? id)
             }
@@ -794,7 +804,7 @@ private struct AddFocusAppMenu: View {
 
 /// 根据 bundle ID 取 App 图标；找不到 App 时用系统通用图标
 @MainActor
-private enum AppIcon {
+enum AppIcon {
     static func forBundleID(_ bundleID: String, size: CGFloat = 32) -> NSImage {
         let image: NSImage
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
@@ -1117,6 +1127,10 @@ enum TimeUnit {
     case seconds, minutes, times
     /// 十分之一，显示为百分比（如 8 → 80%），用于透明度
     case percentTens
+    /// 十分之一，显示一位小数（如 27 → 2.7），用于鼠标速度、平滑程度
+    case tenths
+    /// 鼠标滚动的最小步长（像素点）
+    case points
 
     var seconds: TimeInterval { self == .minutes ? 60 : 1 }
 
@@ -1126,6 +1140,8 @@ enum TimeUnit {
         case .minutes: "\(value) 分钟"
         case .times: value == 0 ? "不允许" : "\(value) 次"
         case .percentTens: "\(value * 10)%"
+        case .tenths: String(format: "%.1f", Double(value) / 10)
+        case .points: "\(value) 点"
         }
     }
 }

@@ -126,7 +126,7 @@ final class LocalMCPProtocol {
             return HTTPReply(status: 403)
         }
         guard request.headers["authorization"] == "Bearer \(token)" else {
-            return HTTPReply.json(["error": "密钥不对：请在星期五「设置 › 提醒 › 连接 AI」重新复制接入方式"], status: 401,
+            return HTTPReply.json(["error": "密钥不对：请在星期五「设置 › Agent主动关怀 › 功能接入」重新复制接入方式"], status: 401,
                                   headers: ["WWW-Authenticate": "Bearer"])
         }
         guard request.method == "POST" else { return HTTPReply(status: 405, headers: ["Allow": "POST"]) }

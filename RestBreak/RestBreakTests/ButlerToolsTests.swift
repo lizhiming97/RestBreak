@@ -37,6 +37,18 @@ struct ButlerToolsTests {
         #expect(call("push", ["intent": "info", "title": "a"], store: store).text.contains("why"))
     }
 
+    @Test func 看现状_带上今天的休息和开会数据() throws {
+        var ctx = sample
+        ctx.breaksPostponedToday = 3; ctx.restMinutesToday = 18; ctx.longestStretchTodayMinutes = 140
+        ctx.lastRestAt = "11:20"; ctx.meetingMinutesToday = 185; ctx.nextBreakAt = "15:20"; ctx.nextBreakKind = "长休息"
+        let r = call("get_context", [:], store: RT.tempStore(), context: ctx)
+        let situation = try #require(RT.object(r.text)["situation"] as? [String: Any])
+        #expect(situation["breaksPostponedToday"] as? Int == 3)
+        #expect(situation["meetingMinutesToday"] as? Int == 185)
+        #expect(situation["lastRestAt"] as? String == "11:20")
+        #expect(situation["nextBreakKind"] as? String == "长休息")
+    }
+
     @Test func 看现状_带上到点提醒() throws {
         let store = RT.tempStore()
         _ = ReminderTools.call("create_reminder", arguments: ["title": "吃药", "messages": ["该吃药了"],

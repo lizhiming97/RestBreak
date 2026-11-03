@@ -16,11 +16,31 @@ struct DayStats: Codable, Equatable, Sendable {
     var restSeconds: TimeInterval = 0
     /// 当天最长一次连续工作没休息的时长，单位秒
     var longestWorkStretch: TimeInterval = 0
+    /// 今天开会（有 App 在用麦克风）累计多久，单位秒；没开「开会时自动推迟」时不统计
+    var meetingSeconds: TimeInterval = 0
+    /// 今天最后一次真正休息（完成休息或离开够久）结束的时刻
+    var lastRestAt: Date?
 
     /// 完成率 = 完成 /（完成 + 跳过）；还没有休息时为 nil
     var completionRate: Double? {
         let total = completed + skipped
         return total == 0 ? nil : Double(completed) / Double(total)
+    }
+}
+
+extension DayStats {
+    /// 逐项可缺省地读：旧版本写的统计文件没有后来加的字段，不能因此读不出来
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(date: try c.decode(String.self, forKey: .date))
+        completed = try c.decodeIfPresent(Int.self, forKey: .completed) ?? 0
+        skipped = try c.decodeIfPresent(Int.self, forKey: .skipped) ?? 0
+        postponed = try c.decodeIfPresent(Int.self, forKey: .postponed) ?? 0
+        naturalBreaks = try c.decodeIfPresent(Int.self, forKey: .naturalBreaks) ?? 0
+        restSeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .restSeconds) ?? 0
+        longestWorkStretch = try c.decodeIfPresent(TimeInterval.self, forKey: .longestWorkStretch) ?? 0
+        meetingSeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .meetingSeconds) ?? 0
+        lastRestAt = try c.decodeIfPresent(Date.self, forKey: .lastRestAt)
     }
 }
 
@@ -38,14 +58,22 @@ struct StatsRecorder: Sendable {
     private var lastWorkingAt: Date?
     /// 正在进行的休息，结束时用来算时长
     private var currentBreak: BreakSession?
+    /// 上一次 tick 时正在开会的时刻（不在开会时为 nil），用来按两次 tick 的间隔累计开会时长
+    private var lastMeetingAt: Date?
 
     init(days: [String: DayStats] = [:], calendar: Calendar = .current) {
         self.days = days
         self.calendar = calendar
     }
 
-    /// 每秒调用一次。isWorking：正常计时中（不在休息、离开、暂停）
-    mutating func tick(now: Date, isWorking: Bool) {
+    /// 每次调度 tick 调用。isWorking：正常计时中（不在休息、离开、暂停）；inMeeting：正在开会
+    mutating func tick(now: Date, isWorking: Bool, inMeeting: Bool = false) {
+        // 上一次 tick 在开会，这段间隔就算开会（会议结束那一刻的 tick 也把最后一段补上）。
+        // 间隔超过 15 分钟说明程序卡住或睡眠过，不整段计入
+        if let last = lastMeetingAt, now.timeIntervalSince(last) <= 15 * 60, now > last {
+            update(now) { $0.meetingSeconds += now.timeIntervalSince(last) }
+        }
+        lastMeetingAt = inMeeting ? now : nil
         guard isWorking else {
             // 离开、暂停、休息时连续工作中断；离开够久由 naturalBreakDetected 记为休息
             stretchStart = nil
@@ -81,6 +109,7 @@ struct StatsRecorder: Sendable {
                 update(now) { day in
                     day.completed += 1
                     if let started { day.restSeconds += now.timeIntervalSince(started.startedAt) }
+                    day.lastRestAt = now
                 }
                 // 好好休息过了，连续工作重新算
                 stretchStart = nil
@@ -97,6 +126,7 @@ struct StatsRecorder: Sendable {
             update(now) { day in
                 day.naturalBreaks += 1
                 day.restSeconds += awayDuration
+                day.lastRestAt = now
             }
             stretchStart = nil
             lastWorkingAt = nil

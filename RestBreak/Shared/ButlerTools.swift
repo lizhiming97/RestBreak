@@ -12,7 +12,7 @@ enum ButlerTools {
 
     static let specs: [ToolSpec] = [
         ToolSpec(name: "get_context",
-                 description: "看用户现在的状况：本地时间和星期几、是否在电脑前/开会/休息、连续工作多久、今天的休息和日程、到点提醒（接下来 24 小时和最近错过的）、今天推过什么、还剩几条推送预算。决定要不要 push 之前先调用它。",
+                 description: "看用户现在的状况：本地时间和星期几、是否在电脑前/开会/休息、连续工作多久、今天休息/推迟/跳过几次和最后一次休息的时刻、今天开会累计多久、下一次休息几点、今天的日程、到点提醒（接下来 24 小时和最近错过的）、今天推过什么、还剩几条推送预算。决定要不要 push 之前先调用它。",
                  schema: #"{"type":"object","properties":{}}"#, readOnly: true, destructive: false, autoApprove: true),
         ToolSpec(name: "push",
                  description: "让管家现在主动对用户说一件事（显示在灵动岛）。会先经过打扰预算、去重、时机检查；被拦下时返回原因。",

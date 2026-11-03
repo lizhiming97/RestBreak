@@ -93,6 +93,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         keyWatch?.invalidate()
         keyWatch = nil
+        // 菜单栏图标子菜单里拨过的开关，菜单关掉后一起生效
+        MenuBarShelfMenu.Actions.shared.flushPending()
     }
 
     private func checkShortcutKeys() {
@@ -125,6 +127,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let statsItem = menuItem("今天已休息 \(today.completed + today.naturalBreaks) 次\(rate)", #selector(showStats))
         statsItem.image = NSImage(systemSymbolName: "chart.bar", accessibilityDescription: nil)
         menu.addItem(statsItem)
+        // 菜单栏图标收纳：已收起的图标排一行，子菜单勾选收起哪些（图标的读取和移动由独立组件完成）
+        MenuBarShelfMenu.add(to: menu, target: self, fallback: #selector(showMenuBarIcons),
+                             settings: #selector(showMenuBarCompanionSettings))
         menu.addItem(.separator())
 
         // 1. 状态说明（灰色）+ 每种休息一行：左边倒计时，右边灰色「立即开始」，点这一行就开始这种休息
@@ -288,6 +293,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func pauseIndefinitely() { coordinator.pause(until: nil) }
 
     @objc private func showSettings() { openSettings(nil) }
+    /// 收纳还没启用：组件装了就打开它的设置完成授权和启用；没装时打开设置里的「菜单栏收纳」页说明。
+    @objc private func showMenuBarIcons() {
+        if MenuBarCompanionClient.shared.installedURL() == nil { openSettings(.menuBar) }
+        else { MenuBarCompanionClient.shared.open(.settings) }
+    }
+    @objc private func showMenuBarCompanionSettings() { MenuBarCompanionClient.shared.open(.settings) }
     @objc private func showStats() { openSettings(.stats) }
     @objc private func showReminders() { openSettings(.reminders) }
     @objc private func quit() { NSApp.terminate(nil) }

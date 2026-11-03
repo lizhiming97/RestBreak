@@ -39,6 +39,40 @@ struct StatsTests {
         #expect(day.completionRate == 0.5)
     }
 
+    @Test func 累计今天开会时长_跨tick按间隔计入() {
+        var r = StatsRecorder(calendar: calendar)
+        let t = morning
+        r.tick(now: t, isWorking: true, inMeeting: true)
+        r.tick(now: t + minutes(1), isWorking: true, inMeeting: true)
+        r.tick(now: t + minutes(3), isWorking: true, inMeeting: false)   // 上一段在开会，这 2 分钟也算
+        r.tick(now: t + minutes(10), isWorking: true, inMeeting: false)
+        #expect(r.day(for: t).meetingSeconds == minutes(3))
+        // 间隔太久（程序卡住、睡眠）不整段计入
+        r.tick(now: t + minutes(20), isWorking: true, inMeeting: true)
+        r.tick(now: t + minutes(60), isWorking: true, inMeeting: true)
+        #expect(r.day(for: t).meetingSeconds == minutes(3))
+    }
+
+    @Test func 记下今天最后一次真正休息的时刻() {
+        var r = StatsRecorder(calendar: calendar)
+        let t = morning
+        #expect(r.day(for: t).lastRestAt == nil)
+        r.record(.breakStarted(session(.micro, at: t)), now: t)
+        r.record(.breakEnded(.micro, .completed), now: t + 20)
+        #expect(r.day(for: t).lastRestAt == t + 20)
+        r.record(.breakStarted(session(.long, at: t + minutes(30))), now: t + minutes(30))
+        r.record(.breakEnded(.long, .skipped), now: t + minutes(31))
+        #expect(r.day(for: t).lastRestAt == t + 20)   // 跳过不算
+        r.record(.naturalBreakDetected(awayDuration: minutes(12), completed: [.micro]), now: t + minutes(60))
+        #expect(r.day(for: t).lastRestAt == t + minutes(60))
+    }
+
+    @Test func 旧版统计文件没有新字段也能读() throws {
+        let old = #"{"date":"2026-10-20","completed":2,"skipped":0,"postponed":1,"naturalBreaks":0,"restSeconds":40,"longestWorkStretch":3600}"#
+        let day = try JSONDecoder().decode(DayStats.self, from: Data(old.utf8))
+        #expect(day.completed == 2 && day.meetingSeconds == 0 && day.lastRestAt == nil)
+    }
+
     @Test func 被打断的休息不计入完成或跳过() {
         var r = StatsRecorder(calendar: calendar)
         r.record(.breakStarted(session(.micro, at: morning)), now: morning)

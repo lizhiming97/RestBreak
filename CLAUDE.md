@@ -3,15 +3,39 @@
 > 这份文件只放**当前状态、规则、偏好、坑和文档索引**。各功能的实现细节在 `docs/项目细节.md`（按阶段分节），设计和计划在 `docs/superpowers/`，每次改了什么看 `git log`。改完功能要同步更新对应的地方，这里只留结论。
 
 ## 当前状态（2026-11-03）
-- **当前正式版 0.7.2**（2026-11-03 发布）：GitHub 上只有「星期五 0.7.2」一个提交（叠在 0.7.0 之上），标签 `v0.7.2`，Release 附 `Friday-0.7.2.dmg`；本地 DMG `发布/星期五-0.7.2.dmg`。0.7.2 = 0.7.1 的休息合并 + 剪贴板历史。下面 0.7.0 / 0.7.1 两条是历史记录。
+- **当前正式版 0.7.4**（2026-11-03 发布到 GitHub：标签 `v0.7.4`，Release 附 `Friday-0.7.4.dmg`，叠在 0.7.2 之上；用户同时在长期试用这个包，问题攒着下一版改）：`发布/星期五-0.7.4.dmg` = 0.7.3 + 鼠标组件（`Contents/Helpers/` 里同时有收纳和鼠标两个组件）+ 设置侧栏改名 + `get_context` 补了今天推迟/最后休息/开会时长/下次休息等数据和新的巡视任务说明（用户要重新复制给 Codex），用户装来真机试。两个组件的源码就在公开仓库里，包内也带源码归档。打包：`scripts/build-menu-bar-experiment.py --output <目录>` → `MouseCompanion/scripts/build_app.py --main-app <目录>/星期五.app`（产物在 `MouseCompanion/dist/星期五.app`）→ 按「发版」做 DMG。
+- 0.7.3 本地测试包（2026-11-03，没单独发）：0.7.2 + 菜单栏收纳，内容都在 0.7.4 里。
+- 0.7.2（2026-11-03 发布，已被 0.7.4 取代）= 0.7.1 的休息合并 + 剪贴板历史。下面 0.7.0 / 0.7.1 两条是历史记录。
 - 版本 **0.7.0**（改名「星期五」后的第一个正式包），已合进 main；GitHub（`lizhiming97/RestBreak`，**2026-10-29 起公开开源，MIT**）上只有一个「星期五 0.7.0」提交，标签 `v0.7.0`，DMG 挂在 GitHub Releases。DMG `发布/星期五-0.7.0.dmg`，用户装到「应用程序」开始深度体验，问题攒着统一调整。0.6.2 没有单独发，两个修复（菜单开着时截图快捷键、首次点设置不弹窗）都在 0.7.0 里。
-- 0.7 内容：App 只做「嘴」（灵动岛 + 到点提醒 + 推送关卡），说什么由用户主要用的 Agent 巡视后 `push`；接入是**本机 MCP 地址 + 密钥**（`http://127.0.0.1:38128/mcp`，服务名 `friday`，像瑞幸 MCP 一样交给用户的 AI 自己加，**不扫描用户的 App**），另给巡视任务说明（**定时间隔由用户在自己的 AI 应用里设**）；设置「提醒」页只有「功能接入 / 记录」两个分段，**留意什么写在 Agent 的定时任务里，App 不重复配置**（用户要求，不要再加回关注方向）。细节见 `docs/项目细节.md` 第七阶段。
+- 0.7 内容：App 只做「嘴」（灵动岛 + 到点提醒 + 推送关卡），说什么由用户主要用的 Agent 巡视后 `push`；接入是**本机 MCP 地址 + 密钥**（`http://127.0.0.1:38128/mcp`，服务名 `friday`，像瑞幸 MCP 一样交给用户的 AI 自己加，**不扫描用户的 App**），另给巡视任务说明（**定时间隔由用户在自己的 AI 应用里设**）；设置「Agent主动关怀」页（原「提醒」）只有「功能接入 / 记录」两个分段，**留意什么写在 Agent 的定时任务里，App 不重复配置**（用户要求，不要再加回关注方向）。细节见 `docs/项目细节.md` 第七阶段。
 - 用户在体验中提过、先不改的：站会结束后马上弹休息（开会/离开判定有偏差，原因和两种改法见 2026-10-29 的对话：麦克风开着但人没看屏幕、短暂离开不满 5 分钟；用户说再用一段时间再定）。
 - **0.7.1 本地测试包**（2026-10-30）：`发布/星期五-0.7.1.dmg`，只给用户自己装来体验，**没推 GitHub、没打标签、没发 Release**。内容：微休息和长休息挨得太近时合并成长休息（临近合并 + 会前合并），设计 `docs/superpowers/specs/2026-10-29-break-merge-design.md`，规则见 `docs/项目细节.md`「调度引擎设计」。用户体验没问题后，再和攒着的其他问题一起正式发版（到时按「发版」一节补标签、推 GitHub）。
 
 - **剪贴板历史**（2026-11-03，Codex 做的 PR 1，挑进本地 main 后随 0.7.2 发布，PR 1 已关闭）：默认关闭，开启后记录文字和图片，搜索 / 固定 / 纯文本复制 / 排除应用，普通历史超过 7 天自动清理（固定的保留），菜单「剪贴板历史…」、设置「剪贴板」页、全局快捷键三个入口；数据在 `~/Library/Application Support/FridayClipboard`（沙盒容器内）。审查时修了：面板里「清空全部」确认框会把面板一起关掉、快捷键在「快捷键」页重复出现。**待用户真机试**：面板里的「清空全部历史…」、超过 7 天的历史是否被清掉、锁屏/睡眠后是否停止记录。以后别的 AI 交来的 PR 也**不要在 GitHub 上直接合并**：挑进本地 main，随发版推上去后关 PR。**自动粘贴（实验）用户说用不到，已去掉，不要再加回来。**实现与验证细节见 `docs/clipboard/`。
 
+- **鼠标组件**（2026-11-03，Codex 做的 PR 2，CC review 修改后挑进本地 main，随 0.7.4 发布，PR 2 已关闭、远端分支已删，**待用户真机试**）：见下面「鼠标组件」一节。
+
+- **设置侧栏名字**（2026-11-03 用户定的）：休息统计、休息间隔、Agent主动关怀、会议避让、外观与快捷键、历史剪贴板、截图、菜单栏收纳、鼠标顺滑。名字就是 `SettingsPage` 的 rawValue，界面文字里提到页面时用这些名字。
+- **休息判断用不上剪贴板、鼠标数据**（2026-11-03 评估）：在不在电脑前靠系统的「距上次键鼠输入」，滚轮、复制早已包含在内；要更细只能常驻监听输入，违背性能规则。真正可改的是用户 10-29 提的「站会后马上弹休息」（开会时长时间没碰键鼠可算眼睛休息过），用户还没决定。
+
 - 待用户手动验证的旧项：`docs/superpowers/specs/2026-10-23-agent-step0-findings.md` 末尾的清单（Claude Desktop `.mcpb`、ChatGPT App 里的 Codex 等）。
+
+## 菜单栏收纳（2026-11-03 合并进 main，随 0.7.4 发布）
+- 来自 `feature/menu-bar-shelf`（已合并）。主程序仍为 MIT＋沙盒；`MenuBarCompanion/` 是独立 GPL 组件，打包时放进 `星期五.app/Contents/Helpers/`，用户只装一个 App。
+- 用户路径：星期五菜单顶部显示已收起图标（点开原菜单），「菜单栏图标 ▸」子菜单逐项开关，关菜单后一起生效。菜单栏只有星期五一个图标；组件随星期五启动/退出，启动时自动恢复收起选择。首次需在组件设置里授权并启用。
+- 数据流：组件写 App Group `MenuBarShelf/snapshot.json`＋图标 PNG，星期五只读显示；星期五用 `friday-menubar://hide|show|open?key=<bundleID>#<序号>` 发命令。不要改用窗口编号（macOS 26 会在屏幕间互换）。
+- 坑：macOS 26 收纳项被放到收纳区最左端，收纳/显示只验证分隔符哪一侧；分隔符位置系统不保存，组件自存偏移与收起列表；不能在 Swift Task/主队列块里直接 `NSApp.terminate`（卡死），先 `stop()` 再退出；KVO 观察 `NSRunningApplication` 要持有对象。
+- 测试：组件 25 项、主程序 276 项、签名 5 项。设计与验证：`docs/menu-bar/2026-11-01-design.md`、`2026-11-03-multi-display-design.md`、`2026-11-03-menu-panel-design.md`、`2026-11-01-validation.md`。
+- 下一步：用户长期试用 0.7.4；未测范围（「单独空间」开启、三屏、macOS 14/15、超宽滚动）见验证记录。
+- 构建：`python3 scripts/build-menu-bar-experiment.py`；组件测试：`swift test --build-system native --package-path MenuBarCompanion`。
+
+## 鼠标组件（2026-11-03 合并进本地 main，随 0.7.4 发布）
+- `MouseCompanion/` 是独立非沙盒 App `星期五鼠标.app`（Bundle ID `com.lizhiming.FridayMouse`），复用 Caldis/Mos 的平滑滚动核心，**许可 CC BY-NC 4.0（非商业）**，不适用主程序 MIT。**上架 App Store 或商业化前必须整个剥离**（Mos 作者也明确不许上 App Store），剥离方法见 `MouseCompanion/UPSTREAM.md`。
+- 用户路径：设置「鼠标」页里直接开「鼠标增强」→ 点「去授权」给「星期五鼠标」辅助功能 → 调方向、手感、排除 App。**所有设置都在星期五这一页，组件不要再有自己的窗口或菜单栏图标**（用户要求）。默认关闭；只处理普通滚轮，触控板/Magic Mouse/连续事件原样放行；检测到 Mos 运行时不接管。
+- 数据流：星期五写 App Group `MouseCompanion/config.json`，组件写回 `status.json`，各发 Darwin 通知 `com.lizhiming.RestBreak.mouse.config|status`；星期五用 `friday-mouse://launch|authorize` 拉起组件。`MouseSettings`（主程序）和 `ScrollConfiguration`（组件）字段名要一起改。组件只在增强开着且星期五运行时留下，打包放 `Contents/Helpers/`，签名带 App Group 权限。
+- 规则：不监听 `mouseMoved`、不定时检查（权限变化靠 `com.apple.accessibility.api` 通知）；系统暂停监听时就地恢复，10 秒内最多 3 次。别把这些改回去（理由见 `docs/mouse/2026-11-03-validation.md`）。
+- 构建：先 `python3 scripts/build-menu-bar-experiment.py` 出含收纳的 App，再 `python3 MouseCompanion/scripts/build_app.py --main-app <该 App 绝对路径>` 加入鼠标组件。组件测试：`swift test --build-system native --package-path MouseCompanion`（13 项）。
+- 下一步：用户真机试 0.7.4（验证清单见 validation 文档末尾）；合成事件只填像素位移，Excel/Java 类 App 是否响应待试。
 
 ## 背景与工作方式
 - 目标：macOS 菜单栏休息提醒 App（类似 Time Out / Stretchly），逐步扩展成「电脑上的贴身管家」：主动、准时、有温度地提醒，不只管健康。主要自用，以后想上架 Mac App Store。竞品调研见 `TimeOut与Stretchly功能对比及自研方案.md`。
@@ -32,7 +56,7 @@
   xcodebuild -scheme RestBreak -configuration Debug -derivedDataPath "$DD" build -allowProvisioningUpdates
   xcodebuild test -scheme RestBreak -destination platform=macOS -derivedDataPath "$DD" -allowProvisioningUpdates
   ```
-  2026-11-03 共 286 个测试。改了调度规则，`DaySimulationTests`（逐秒模拟 20 个工作日）和 `AdaptiveTickTests`（逐秒和按需两种跑法，结果必须一致）必须跑通。
+  2026-11-03 共 299 个测试。改了调度规则，`DaySimulationTests`（逐秒模拟 20 个工作日）和 `AdaptiveTickTests`（逐秒和按需两种跑法，结果必须一致）必须跑通。
 - 不要用 `open` 命令替用户启动 App：Xcode 调试器挂着的旧实例关不掉，会留下两个实例（`SingleInstance` 的规则是新启动的留下）。
 - 直接运行小程序、访问 App Group、跑 `codesign` / `hdiutil` 这类命令，要在 shell 沙盒外执行。
 
@@ -110,6 +134,7 @@
   - 设置窗口样式；
   - 截图、标注、OCR 翻译；
   - AI 派提醒（0.5）、管家骨架（0.6）、App 只做「嘴」（0.7）。
+- `docs/mouse/`：鼠标组件的设计和验证记录（含 CC review 修改）。
 - `docs/clipboard/`：剪贴板历史的调研、实现边界和验证记录（参考了 Maccy，MIT 声明在 `RestBreak/RestBreak/ThirdParty/`）。
 - `docs/superpowers/specs/`：各功能的设计文档。管家方向以 `2026-10-28-agent-driven-redesign.md` 为准（App 只做「嘴」）；`2026-10-24-butler-v2-design.md` 的五种来意、推送关卡仍有效，内置规则和 0.7 / 0.8 规划已被取代。
 - `docs/superpowers/plans/`：各次的实现计划。开头一行「状态」写明是否完成；以后新的计划做完一步就打勾，当作进度表。

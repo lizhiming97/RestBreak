@@ -208,7 +208,7 @@ final class BreakCoordinator: ObservableObject {
         updateReturnMonitor()
         let isWorking: Bool = if case .running = scheduler.state { true } else { false }
         let before = stats.days
-        stats.tick(now: now, isWorking: isWorking)
+        stats.tick(now: now, isWorking: isWorking, inMeeting: scheduler.isInMeeting)
         if stats.days != before { statsDirty = true }
         // 「最长连续工作」这类小变化攒着，最多 15 分钟写一次盘（有休息事件、睡眠、退出时会立即写）
         if statsDirty, now.timeIntervalSince(statsSavedAt) >= 15 * 60 { saveStats(now: now) }
@@ -266,6 +266,8 @@ final class BreakCoordinator: ObservableObject {
         case .paused: state = "暂停提醒中"
         }
         let today = stats.day(for: now)
+        // 暂停中没有「下一次休息」
+        let next: (kind: BreakKind, date: Date)? = if case .paused = scheduler.state { nil } else { scheduler.nextBreakStart(now: now) }
         var events: [ButlerContext.Event]?
         if settings.followCalendar {
             let all: [CalendarEvent] = settings.calendarSource == .mac
@@ -278,7 +280,14 @@ final class BreakCoordinator: ObservableObject {
                              workingStretchMinutes: Int(stats.currentStretch(now: now) / 60),
                              firstActiveToday: butler.firstActiveToday(now: now),
                              breaksCompletedToday: today.completed + today.naturalBreaks,
-                             breaksSkippedToday: today.skipped, todayEvents: events)
+                             breaksSkippedToday: today.skipped, todayEvents: events,
+                             breaksPostponedToday: today.postponed,
+                             restMinutesToday: Int(today.restSeconds / 60),
+                             longestStretchTodayMinutes: Int(today.longestWorkStretch / 60),
+                             lastRestAt: today.lastRestAt.map(TimeText.hourMinute),
+                             meetingMinutesToday: settings.postponeDuringMeetings ? Int(today.meetingSeconds / 60) : nil,
+                             nextBreakAt: next.map { TimeText.hourMinute($0.date) },
+                             nextBreakKind: next?.kind.displayName)
     }
 
     /// 退出前把没写盘的统计存下来

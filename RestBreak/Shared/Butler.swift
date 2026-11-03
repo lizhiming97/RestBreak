@@ -131,4 +131,17 @@ struct ButlerContext: Codable, Equatable, Sendable {
     var breaksSkippedToday: Int
     /// 今天剩下的日程（没开「按日历安排」时为 nil）
     var todayEvents: [Event]?
+    /// 今天点了几次「推迟」
+    var breaksPostponedToday: Int?
+    /// 今天累计休息了多少分钟（完成的休息 + 离开电脑）
+    var restMinutesToday: Int?
+    /// 今天最长一次连续工作多少分钟
+    var longestStretchTodayMinutes: Int?
+    /// 今天最后一次真正休息结束的时刻（HH:mm；今天还没休息过为 nil）
+    var lastRestAt: String?
+    /// 今天开会（有 App 在用麦克风）累计多少分钟；没开「开会时自动推迟」时为 nil
+    var meetingMinutesToday: Int?
+    /// 下一次休息预计几点开始（HH:mm）、是哪种（「微休息」「长休息」）；休息都关了或暂停中为 nil
+    var nextBreakAt: String?
+    var nextBreakKind: String?
 }

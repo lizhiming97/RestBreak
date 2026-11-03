@@ -34,10 +34,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.clipboard.onOpenSettings = { settingsWindow.show(page: .clipboard) }
         coordinator.reminders.onOpenPage = { settingsWindow.show(page: .reminders) }
         coordinator.start()
+        MouseCompanionClient.shared.launchIfEnabled()
 
         self.coordinator = coordinator
         self.settingsWindow = settingsWindow
         self.statusBar = statusBar
+        // 用过菜单栏图标收纳的话，在后台拉起组件，让收起的图标保持收起
+        MenuBarCompanionClient.shared.launchInBackgroundIfUsed()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
