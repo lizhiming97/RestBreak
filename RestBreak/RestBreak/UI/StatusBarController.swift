@@ -98,7 +98,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func checkShortcutKeys() {
         let flags = UInt(CGEventSource.flagsState(.combinedSessionState).rawValue) & KeyShortcut.allModifierFlags
         let shortcuts = coordinator.settings.shortcuts
-        let pressed = [ShortcutAction.captureScreen, .pinClipboard].first { action in
+        let pressed = [ShortcutAction.captureScreen, .pinClipboard, .clipboardHistory].first { action in
             guard let s = shortcuts[action] else { return false }
             return s.modifiers == flags && CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(s.keyCode))
         }
@@ -129,13 +129,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         // 1. 状态说明（灰色）+ 每种休息一行：左边倒计时，右边灰色「立即开始」，点这一行就开始这种休息
         let isOnBreak: Bool = if case .onBreak = scheduler.state { true } else { false }
-        for line in statusNotes(scheduler: scheduler, settings: settings, now: now) {
+        let plan = scheduler.plannedBreak(now: now)
+        for line in statusNotes(scheduler: scheduler, plan: plan, settings: settings, now: now) {
             let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }
         let kinds = isOnBreak ? [] : BreakKind.allCases.filter { settings[$0].isEnabled }
-        let breakTexts = kinds.map { breakLine($0, scheduler: scheduler, now: now) }
+        let breakTexts = kinds.map { breakLine($0, scheduler: scheduler, plan: plan, now: now) }
         // 2 的内容先算出来：右侧小字的位置按所有行里最长的那行定，菜单不会被撑宽
         let soon = coordinator.reminders.upcoming(now: now, limit: 2).filter { $0.date.timeIntervalSince(now) < 24 * 3600 }
         let reminderTexts = soon.map { "\(ScheduleText.fireText($0.date, now: now, calendar: .current))　\($0.title)" }
@@ -178,13 +179,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // 4. 设置 / 退出（开机自动启动在设置窗口「休息安排」里）
+        addItem("剪贴板历史…", #selector(showClipboard))
         addItem("设置…", #selector(showSettings), key: ",")
         menu.addItem(.separator())
         addItem("退出星期五", #selector(quit), key: "q")
     }
 
     /// 菜单顶部的状态说明（灰色）：暂停、离开、开会、日程、推迟这类情况
-    private func statusNotes(scheduler: BreakScheduler, settings: AppSettings, now: Date) -> [String] {
+    private func statusNotes(scheduler: BreakScheduler, plan: PlannedBreak?, settings: AppSettings, now: Date) -> [String] {
         switch scheduler.state {
         case .onBreak(let session):
             return ["正在\(session.kind.displayName)"]
@@ -200,8 +202,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 let title = coordinator.currentEventTitle.map { "「\($0)」" } ?? ""
                 return ["日程\(title)进行中，休息在 \(TimeText.hourMinute(event.end)) 后开始"]
             }
-            if let next = scheduler.nextBreakStart(now: now), let due = scheduler.nextBreak()?.dueDate, next.date < due {
-                return ["为了避开日程，\(next.kind.displayName)提前到 \(TimeText.hourMinute(next.date))"]
+            if let plan, plan.start < plan.dueDate {
+                return plan.mergeReason == .beforeMeeting
+                    ? ["快开会了，长休息提前到 \(TimeText.hourMinute(plan.start))"]
+                    : ["为了避开日程，\(plan.kind.displayName)提前到 \(TimeText.hourMinute(plan.start))"]
             }
             if let deadline = scheduler.deferralEndsAt, let reason = coordinator.deferralReason {
                 let leaving = reason == "全屏" ? "退出全屏" : "离开「\(reason)」"
@@ -211,11 +215,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// 一种休息的那一行：计时中显示时刻和倒计时，暂停或离开时只显示名字
-    private func breakLine(_ kind: BreakKind, scheduler: BreakScheduler, now: Date) -> String {
+    /// 一种休息的那一行：计时中显示时刻和倒计时，暂停或离开时只显示名字。
+    /// 微休息要合并进长休息时：长休息显示合并后的开始时间，微休息那一行不显示一个不会发生的时间
+    private func breakLine(_ kind: BreakKind, scheduler: BreakScheduler, plan: PlannedBreak?, now: Date) -> String {
         guard case .running = scheduler.state else { return kind.displayName }
         let timer = scheduler.timers[kind] ?? BreakTimer(dueDate: now)
-        var line = "\(kind.displayName)　\(TimeText.hourMinute(timer.dueDate))（\(TimeText.relative(timer.dueDate.timeIntervalSince(now)))）"
+        var date = timer.dueDate
+        if let plan, plan.mergeReason != nil {
+            if kind == plan.kind {
+                date = plan.start
+            } else {
+                return "\(kind.displayName)　这次并入长休息"
+            }
+        }
+        var line = "\(kind.displayName)　\(TimeText.hourMinute(date))（\(TimeText.relative(date.timeIntervalSince(now)))）"
         if timer.postponeCount > 0 { line += " 已推迟 \(timer.postponeCount) 次" }
         return line
     }
@@ -241,6 +254,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         ]))
         return result
     }
+
+    @objc private func showClipboard() { coordinator.performShortcutFromMenu(.clipboardHistory) }
 
     private func menuItem(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)

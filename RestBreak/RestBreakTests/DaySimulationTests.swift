@@ -34,7 +34,8 @@ struct DaySimulationTests {
         let (violations, stats) = simulateDay(seed: UInt64(seed), strict: seed % 5 == 0)
         #expect(violations.isEmpty, "\(violations.prefix(5))")
         // 确认模拟真的覆盖到了各种情况，而不是什么都没发生
-        #expect(stats.breaksStarted >= 8, "一天只弹了 \(stats.breaksStarted) 次休息")
+        // （合并后休息次数会少一点：挨得近的两次并成一次长休息）
+        #expect(stats.breaksStarted >= 7, "一天只弹了 \(stats.breaksStarted) 次休息")
         print("SIM 种子 \(seed)：休息 \(stats.breaksStarted) 次（推迟满上限后弹出 \(stats.forcedAfterDeferral) 次），推迟中 \(stats.secondsDeferred / 60) 分钟，用户推迟 \(stats.postponed) 次、跳过 \(stats.skipped) 次，自然休息 \(stats.naturalBreaks) 次")
     }
 
@@ -47,16 +48,23 @@ struct DaySimulationTests {
         var naturalBreaks = 0
         var secondsInEvent = 0
         var pulledForward = 0
+        var mergedNearby = 0
+        var mergedBeforeMeeting = 0
     }
 
     @Test func 二十天合计覆盖到各种情况() {
-        var deferred = 0, inEvent = 0, pulled = 0
+        var deferred = 0, inEvent = 0, pulled = 0, nearby = 0, beforeMeeting = 0
         for seed in 1...20 {
             let stats = simulateDay(seed: UInt64(seed), strict: seed % 5 == 0).1
             deferred += stats.secondsDeferred
             inEvent += stats.secondsInEvent
             pulled += stats.pulledForward
+            nearby += stats.mergedNearby
+            beforeMeeting += stats.mergedBeforeMeeting
         }
+        print("SIM 合并：临近合并 \(nearby) 次，会前合并 \(beforeMeeting) 次")
+        #expect(nearby > 0, "20 天里没有发生过临近合并")
+        #expect(beforeMeeting > 0, "20 天里没有发生过会前合并")
         #expect(deferred > 0, "20 天里没有发生过全屏/指定 App 推迟")
         #expect(inEvent > 0, "20 天里没有遇到过日程")
         #expect(pulled > 0, "20 天里没有为日程提前过休息")
@@ -80,6 +88,9 @@ struct DaySimulationTests {
         var lastBreakStartOrAction = 0    // 上一次开始休息、或用户做了会影响计时的操作的时刻
         var normalStretchStart: Int?      // 连续「正常工作、没暂停」开始的时刻
         var deferralEndsBefore: Date?     // 上一秒的推迟上限
+        var lastCompletedStart: Int?      // 上一次自动开始并做完的休息是什么时候开始的（用户操作后清空）
+        var currentBreakByUser = false    // 正在进行的休息是不是用户手动开始的
+        let mergeWindow = 15 * 60         // 默认设置下的合并窗口
 
         // 当天的日历：随机 0～6 个日程，每个 15～90 分钟
         var calendar: [DateInterval] = []
@@ -170,10 +181,20 @@ struct DaySimulationTests {
                         }
                     }
                     #expect(session.endsAt.timeIntervalSince(session.startedAt) == settings[session.kind].duration)
+                    // 不挨太近：没有用户操作时，自动开始的休息离上一次做完的休息至少隔一个合并窗口
+                    if !userActed, let last = lastCompletedStart, second - last < mergeWindow {
+                        fail("离上一次休息才 \((second - last) / 60) 分 \((second - last) % 60) 秒又开始了\(session.kind.displayName)")
+                    }
                     stats.breaksStarted += 1
+                    switch session.mergeReason {
+                    case .nearbyLong: stats.mergedNearby += 1
+                    case .beforeMeeting: stats.mergedBeforeMeeting += 1
+                    case nil: break
+                    }
                     if let due = s.timers[session.kind]?.dueDate, due > now, !userActed { stats.pulledForward += 1 }
                     if (fullscreen || focusApp) && !userActed { stats.forcedAfterDeferral += 1 }
                     currentBreak = session
+                    currentBreakByUser = userActed
                     lastBreakStartOrAction = second
                 case .breakEnded(let kind, let reason):
                     guard let started = currentBreak else {
@@ -184,6 +205,7 @@ struct DaySimulationTests {
                     if strict && (reason == .postponed || reason == .skipped) { fail("严格模式下还能推迟或跳过") }
                     if reason == .postponed { stats.postponed += 1 }
                     if reason == .skipped { stats.skipped += 1 }
+                    if reason == .completed && !currentBreakByUser { lastCompletedStart = Int(started.startedAt.timeIntervalSince(t0)) }
                     currentBreak = nil
                 case .naturalBreakDetected:
                     stats.naturalBreaks += 1
@@ -208,7 +230,10 @@ struct DaySimulationTests {
             } else {
                 normalStretchStart = nil
             }
-            if userActed { lastBreakStartOrAction = second }
+            if userActed {
+                lastBreakStartOrAction = second
+                lastCompletedStart = nil
+            }
         }
         return (violations, stats)
     }

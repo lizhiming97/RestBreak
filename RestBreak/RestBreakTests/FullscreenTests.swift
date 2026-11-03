@@ -36,7 +36,10 @@ struct FullscreenTests {
     }
 
     @Test func 一直全屏时最多推迟30分钟() {
-        var s = BreakScheduler(settings: settings, now: t0)
+        // 长休息调远，免得推迟到 50 分时长休息也快到了、被合并成长休息
+        var custom = settings
+        custom[.long].interval = minutes(120)
+        var s = BreakScheduler(settings: custom, now: t0)
         let due = t0 + minutes(20)
         #expect(startedKind(run(&s, from: due, to: due + minutes(30))) == nil)
         let events = s.tick(now: due + minutes(30), idleSeconds: 0, fullscreen: true)

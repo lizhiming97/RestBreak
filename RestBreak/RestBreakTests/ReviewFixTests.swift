@@ -48,7 +48,8 @@ struct ReviewFixTests {
 
     @Test func 问题2_推迟满上限时弹出的是下一个要到期的休息() {
         var s = BreakScheduler(settings: settings, now: t0)
-        // 微休息 T 到期，长休息 T+33 到期，一直全屏
+        // 微休息 T 到期，长休息 T+33 到期，一直全屏。
+        // 推迟满上限（T+30）时长休息 3 分钟后也到，直接合并成长休息，不会微休息完 3 分钟又弹长休息
         var custom = settings
         custom[.long].interval = minutes(53)
         s = BreakScheduler(settings: custom, now: t0)
@@ -56,7 +57,7 @@ struct ReviewFixTests {
         let events = run(&s, from: due - 5, to: due + minutes(31), fullscreen: { _ in true })
         let start = firstStart(events)
         #expect(start?.1 != nil, "推迟满 30 分钟后没有任何休息弹出")
-        #expect(start?.1 == .micro)
+        #expect(start?.1 == .long)
         if let (date, _) = start { #expect(date == due + minutes(30)) }
     }
 
@@ -76,7 +77,10 @@ struct ReviewFixTests {
     }
 
     @Test func 问题6_全屏时点推迟_按推迟时长回来_不再重新推迟30分钟() {
-        var s = BreakScheduler(settings: settings, now: t0)
+        // 长休息调远，免得推迟满上限时被合并成长休息（长休息推迟 5 分钟）
+        var custom = settings
+        custom[.long].interval = minutes(120)
+        var s = BreakScheduler(settings: custom, now: t0)
         let due = t0 + minutes(20)
         _ = run(&s, from: due - 5, to: due + minutes(30) + 1, fullscreen: { _ in true })
         guard case .onBreak = s.state else { Issue.record("推迟满上限后应该在休息中"); return }

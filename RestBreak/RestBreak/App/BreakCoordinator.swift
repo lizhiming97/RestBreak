@@ -71,6 +71,8 @@ final class BreakCoordinator: ObservableObject {
     private let hotkeys = HotkeyManager()
     /// 截图和贴图
     let screenshots = ScreenshotController()
+    /// 剪贴板历史独立管理设置和存储，避免与休息调度耦合。
+    let clipboard: ClipboardCoordinator
     /// AI 派的提醒
     let reminders = ReminderCoordinator()
     /// 管家（AI 推送的出口、给 AI 的现状）
@@ -88,7 +90,8 @@ final class BreakCoordinator: ObservableObject {
     /// 离开状态下监听鼠标：人一回来就立刻 tick（放慢后最多要等 10 秒才发现）
     private var returnMonitor: Any?
 
-    init() {
+    init(clipboard: ClipboardCoordinator = ClipboardCoordinator()) {
+        self.clipboard = clipboard
         let settings = SettingsStore.load()
         self.settings = settings
         self.scheduler = BreakScheduler(settings: settings, now: Date())
@@ -128,6 +131,8 @@ final class BreakCoordinator: ObservableObject {
             self?.settings.annotationStyles[tool] = style
         }
         registerShortcuts()
+
+        clipboard.start()
 
         startTickLoop(immediate: false)
     }
@@ -334,6 +339,10 @@ final class BreakCoordinator: ObservableObject {
             screenshots.startCapture(settings: settings)
         case .pinClipboard:
             screenshots.pinClipboard(settings: settings)
+        case .clipboardHistory:
+            if case .onBreak = scheduler.state { return }
+            if isPreviewing { return }
+            clipboard.show()
         }
     }
 
@@ -399,6 +408,19 @@ final class BreakCoordinator: ObservableObject {
         }
     }
 
+    /// 合并来的休息在遮罩标题下说一句为什么这次是长休息
+    static func mergeNote(_ reason: BreakMergeReason?) -> String? {
+        switch reason {
+        case .nearbyLong(let advancedBy):
+            let minutes = Int((advancedBy / 60).rounded())
+            return minutes >= 1 ? "长休息也快到了，提前 \(minutes) 分钟一起休" : "长休息也到了，一起休"
+        case .beforeMeeting:
+            return "快开会了，先把长休息做了"
+        case nil:
+            return nil
+        }
+    }
+
     private func showOverlay(for session: BreakSession) {
         // 正在截图时休息开始：先取消截图，免得框选窗口和休息遮罩叠在一起
         screenshots.cancel()
@@ -416,7 +438,8 @@ final class BreakCoordinator: ObservableObject {
             postponeMinutes: Int((settings[session.kind].postponeDuration / 60).rounded()),
             canPostpone: scheduler.canPostponeCurrentBreak,
             canSkip: scheduler.canSkipCurrentBreak,
-            background: photos.background(for: settings, maxPixelSize: Self.largestScreenPixelSize)
+            background: photos.background(for: settings, maxPixelSize: Self.largestScreenPixelSize),
+            note: Self.mergeNote(session.mergeReason)
         )
         isPreviewing = false
         overlay.show(content,

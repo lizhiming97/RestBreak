@@ -1,5 +1,13 @@
 import Foundation
 
+/// 这次休息为什么是「合并」来的（遮罩上用一行小字告诉用户）
+enum BreakMergeReason: Equatable, Sendable {
+    /// 微休息到点时长休息也快到了，直接做长休息；advancedBy 是长休息提前了多久
+    case nearbyLong(advancedBy: TimeInterval)
+    /// 马上要开会，会前那次微休息直接换成长休息
+    case beforeMeeting
+}
+
 /// 一次正在进行的休息
 struct BreakSession: Equatable, Sendable {
     let kind: BreakKind
@@ -7,6 +15,8 @@ struct BreakSession: Equatable, Sendable {
     let endsAt: Date
     /// 这次休息开始前已经被推迟过几次
     let postponeCount: Int
+    /// 合并来的休息记下原因；普通休息为 nil
+    var mergeReason: BreakMergeReason? = nil
 
     var duration: TimeInterval { endsAt.timeIntervalSince(startedAt) }
 }
@@ -49,11 +59,22 @@ enum SchedulerEvent: Equatable, Sendable {
     case pauseEnded
 }
 
+/// 接下来要做的那次休息（已考虑合并、日程中暂缓、日程前提前）
+struct PlannedBreak: Equatable, Sendable {
+    let kind: BreakKind
+    /// 实际会在什么时候开始
+    let start: Date
+    /// 计时器本来的到期时间；start 比它早说明为日程提前了
+    let dueDate: Date
+    /// 合并来的才有原因
+    let mergeReason: BreakMergeReason?
+}
+
 /// 休息调度引擎：纯逻辑，不碰任何界面，只依赖 Foundation。
 /// 所有方法都显式传入 now（当前时间），这样单元测试可以随意「快进时间」。
 struct BreakScheduler: Sendable {
-    /// 更高优先级的休息在这个时间内也要到期时，就跳过低优先级的休息
-    static let higherPriorityLookahead: TimeInterval = 5 * 60
+    /// 合并窗口的上限：微休息到点时，长休息在这个时间内也要到期，就直接做长休息
+    static let maxMergeWindow: TimeInterval = 15 * 60
     /// 麦克风关闭后再等这么久才算会议结束（防止静音时麦克风短暂关闭被误判）
     static let meetingGracePeriod: TimeInterval = 60
     /// 提前到日程前的休息，要在日程开始前这么久结束
@@ -94,6 +115,8 @@ struct BreakScheduler: Sendable {
     private(set) var calendarEvents: [DateInterval] = []
     /// 现在是否在日程中
     private(set) var isInCalendarEvent = false
+    /// 上一次休息做完的时刻：为日程提前休息时，不提前到刚休完不久的时候
+    private var lastBreakCompletedAt: Date?
 
     /// 推迟检查的结果
     private enum DeferralDecision {
@@ -173,24 +196,18 @@ struct BreakScheduler: Sendable {
             }
             // 日程进行中到期的休息先不弹，日程结束后再休息（日程时间也不计入全屏推迟时长）
             if isInCalendarEvent { return [] }
-            // 快到日程了：把快到点的休息提前，赶在日程开始前休息完
-            if !wantsDeferral, let next = nextBreak(),
-               let pulled = pulledForward(kind: next.kind, dueDate: next.dueDate, now: now),
-               now >= pulled.start, now + settings[next.kind].duration <= pulled.eventStart {
-                return startBreak(next.kind, now: now)
-            }
-            switch deferIfNeeded(now: now) {
-            case .hold:
+            guard let plan = plannedBreak(now: now) else {
+                clearDeferral()
                 return []
-            case .limitReached:
-                // 推迟满上限：直接开始预告过的那个休息，不再套用「高优先级快到了就跳过」的规则，
-                // 否则低优先级休息被跳过、高优先级休息又重新推迟，用户会很久都休息不了
-                if let next = nextBreak() { return startBreak(next.kind, now: now) }
-            case .none:
-                break
             }
-            let events = startDueBreakIfNeeded(now: now)
-            return events
+            // 快到日程了：把快到点的休息提前，赶在日程开始前休息完（全屏/指定 App 推迟时不提前）
+            if !wantsDeferral, plan.start < plan.dueDate, now >= plan.start {
+                return startBreak(plan.kind, now: now, mergeReason: plan.mergeReason)
+            }
+            // 全屏/指定 App 时到期的休息先推迟；推迟满上限或不需要推迟时，开始预告的那个（已经算好合并）
+            if deferIfNeeded(now: now) == .hold { return [] }
+            guard plan.dueDate <= now else { return [] }
+            return startBreak(plan.kind, now: now, mergeReason: plan.mergeReason)
         }
     }
 
@@ -235,12 +252,13 @@ struct BreakScheduler: Sendable {
     /// 还没开始的下一次休息能不能跳过（快捷键「跳过下一次休息」）
     var canSkipUpcoming: Bool {
         guard case .running = state, !settings.strictMode else { return false }
-        return nextBreak() != nil
+        return !enabledKinds.isEmpty
     }
 
-    /// 跳过还没开始的下一次休息：从现在重新计时
+    /// 跳过还没开始的下一次休息：从现在重新计时。
+    /// 合并来的长休息被跳过时只重置长休息，被合并的微休息照常按自己的时间来
     mutating func skipUpcoming(now: Date) {
-        guard canSkipUpcoming, let next = nextBreak() else { return }
+        guard canSkipUpcoming, let next = nextBreak(now: now) else { return }
         timers[next.kind] = BreakTimer(dueDate: now + settings[next.kind].interval)
     }
 
@@ -281,28 +299,48 @@ struct BreakScheduler: Sendable {
 
     // MARK: - 查询
 
-    /// 下一次真正会弹出的休息（已考虑「高优先级快到了就跳过低优先级」的规则）
-    func nextBreak() -> (kind: BreakKind, dueDate: Date)? {
-        let enabled = enabledKinds
-        guard let earliest = enabled.min(by: { due($0) < due($1) }) else { return nil }
-        // 如果有更高优先级的休息在 earliest 之后 5 分钟内到期，earliest 会被跳过
-        let winner = enabled
-            .filter { priority($0) <= priority(earliest)
-                && due($0) <= due(earliest) + Self.higherPriorityLookahead }
-            .min(by: { priority($0) < priority($1) }) ?? earliest
-        return (winner, due(winner))
+    /// 合并窗口：微休息到点时，长休息在这个时间内也要到期，就直接做长休息。
+    /// 默认 15 分钟；间隔设得短时按比例缩小，免得几乎每次微休息都变成长休息
+    var mergeWindow: TimeInterval {
+        min(Self.maxMergeWindow, settings[.micro].interval * 0.75, settings[.long].interval * 0.25)
     }
 
-    /// 下一次休息实际会在什么时候开始：考虑日程中暂缓、日程前提前（不含全屏/指定 App 推迟）
+    /// 下一次到点的休息（已考虑合并，不含日程）。dueDate 是最早到期的那个计时器的时间：
+    /// 合并时就是在这个时刻提前做优先级更高的那种休息
+    func nextBreak(now: Date) -> (kind: BreakKind, dueDate: Date, merged: Bool)? {
+        let enabled = enabledKinds
+        guard let earliest = enabled.min(by: { due($0) < due($1) }) else { return nil }
+        // 到期已经过了（比如开会时攒着）就从现在算窗口
+        let reference = max(due(earliest), now)
+        let winner = enabled
+            .filter { priority($0) <= priority(earliest) && due($0) <= reference + mergeWindow }
+            .min(by: { priority($0) < priority($1) }) ?? earliest
+        return (winner, due(earliest), winner != earliest)
+    }
+
+    /// 下一次休息实际会在什么时候开始：考虑合并、日程中暂缓、日程前提前（不含全屏/指定 App 推迟）
     func nextBreakStart(now: Date) -> (kind: BreakKind, date: Date)? {
-        guard let next = nextBreak() else { return nil }
+        plannedBreak(now: now).map { ($0.kind, $0.start) }
+    }
+
+    /// 接下来要做的那次休息：种类、开始时间、是不是合并来的
+    func plannedBreak(now: Date) -> PlannedBreak? {
+        guard let next = nextBreak(now: now) else { return nil }
+        let nearby: BreakMergeReason? = next.merged
+            ? .nearbyLong(advancedBy: max(0, due(next.kind).timeIntervalSince(max(next.dueDate, now)))) : nil
         if let event = currentCalendarEvent(at: now) {
-            return (next.kind, max(next.dueDate, event.end))
+            return PlannedBreak(kind: next.kind, start: max(next.dueDate, event.end),
+                                dueDate: next.dueDate, mergeReason: nearby)
         }
-        if let pulled = pulledForward(kind: next.kind, dueDate: next.dueDate, now: now) {
-            return (next.kind, pulled.start)
+        var start = next.dueDate
+        if let pulled = pulledForward(kind: next.kind, dueDate: next.dueDate, now: now),
+           now + settings[next.kind].duration <= pulled.eventStart || now < pulled.start {
+            start = pulled.start
         }
-        return (next.kind, next.dueDate)
+        if let meeting = mergedBeforeMeeting(kind: next.kind, start: start, dueDate: next.dueDate, now: now) {
+            return PlannedBreak(kind: .long, start: meeting, dueDate: next.dueDate, mergeReason: .beforeMeeting)
+        }
+        return PlannedBreak(kind: next.kind, start: start, dueDate: next.dueDate, mergeReason: nearby)
     }
 
     /// 现在进行中的日程
@@ -312,15 +350,60 @@ struct BreakScheduler: Sendable {
 
     // MARK: - 内部实现
 
+    /// 下一个还没开始的日程
+    private func nextCalendarEvent(after now: Date) -> DateInterval? {
+        calendarEvents.lazy.filter { $0.start > now }.min { $0.start < $1.start }
+    }
+
     /// 休息会在下一个日程开始前后到期 → 返回提前后的开始时间和日程开始时间
     private func pulledForward(kind: BreakKind, dueDate: Date, now: Date) -> (start: Date, eventStart: Date)? {
-        guard dueDate > now,
-              let event = calendarEvents.filter({ $0.start > now }).min(by: { $0.start < $1.start })
-        else { return nil }
+        guard dueDate > now, let event = nextCalendarEvent(after: now) else { return nil }
         // 最晚这时开始，才能在日程前（留 1 分钟缓冲）休息完
         let latestStart = event.start - settings[kind].duration - Self.calendarBuffer
         guard dueDate > latestStart, dueDate <= event.start + Self.calendarPullWindow else { return nil }
-        return (max(latestStart, dueDate - Self.calendarPullWindow), event.start)
+        let start = max(latestStart, dueDate - Self.calendarPullWindow)
+        // 刚休完不久就不再提前，免得两次休息挨得太近（到期落在日程中的话，散会后再休）
+        guard start >= recentBreakFloor else { return nil }
+        return (start, event.start)
+    }
+
+    /// 提前休息不能早于这个时刻：上次休息做完后至少隔一个合并窗口
+    private var recentBreakFloor: Date {
+        (lastBreakCompletedAt ?? .distantPast) + mergeWindow
+    }
+
+    /// 会前合并：会前那次微休息，如果长休息会在会议中或散会后不久到期，就直接做长休息。
+    /// - kind / start / dueDate: 原本计划的那次休息、开始时间、计时器到期时间
+    /// - 返回长休息的开始时间；不满足条件返回 nil
+    private func mergedBeforeMeeting(kind: BreakKind, start: Date, dueDate: Date, now: Date) -> Date? {
+        guard kind != .long, settings[.long].isEnabled,
+              let event = nextCalendarEvent(after: now), start < event.start
+        else { return nil }
+        let longDue = due(.long), longDuration = settings[.long].duration
+        // 连着的会（中间空不到一个合并窗口）当成一场，算到最后一场结束
+        var meetingEnd = event.end
+        var extended = true
+        while extended {
+            extended = false
+            for other in calendarEvents
+            where other.start > event.start && other.start < meetingEnd + mergeWindow && other.end > meetingEnd {
+                meetingEnd = other.end
+                extended = true
+            }
+        }
+        // 长休息在会议中或散会后一个合并窗口内到期，才值得会前做
+        guard longDue > start, longDue <= meetingEnd + mergeWindow else { return nil }
+        // 这是会前最后一次微休息：下一次微休息就算提前（最多一个日程提前窗口），也来不及在会前放下长休息
+        let latestLongStart = event.start - longDuration - Self.calendarBuffer
+        guard start + settings[kind].interval - Self.calendarPullWindow > latestLongStart else { return nil }
+        let longStart = min(start, latestLongStart)
+        // 不提前太多：比原计划最多早一个日程提前窗口，长休息最多提前半个间隔，也不早于刚休完的时候
+        guard longStart >= dueDate - Self.calendarPullWindow,
+              longDue.timeIntervalSince(longStart) <= settings[.long].interval / 2,
+              longStart >= recentBreakFloor,
+              max(longStart, now) + longDuration <= event.start
+        else { return nil }
+        return longStart
     }
 
     private var enabledKinds: [BreakKind] {
@@ -330,30 +413,14 @@ struct BreakScheduler: Sendable {
     private func due(_ kind: BreakKind) -> Date { timers[kind]?.dueDate ?? .distantFuture }
     private func priority(_ kind: BreakKind) -> Int { settings[kind].priority }
 
-    private mutating func startDueBreakIfNeeded(now: Date) -> [SchedulerEvent] {
-        let enabled = enabledKinds
-        // 已到期的里面取优先级最高的
-        guard let candidate = enabled
-            .filter({ due($0) <= now })
-            .min(by: { priority($0) < priority($1) }) else { return [] }
-
-        // 更高优先级的休息 5 分钟内也要到期 → 跳过这个低优先级休息
-        let higherComingSoon = enabled.contains {
-            priority($0) < priority(candidate) && due($0) <= now + Self.higherPriorityLookahead
-        }
-        if higherComingSoon {
-            timers[candidate] = BreakTimer(dueDate: now + settings[candidate].interval)
-            return []
-        }
-        return startBreak(candidate, now: now)
-    }
-
-    private mutating func startBreak(_ kind: BreakKind, now: Date) -> [SchedulerEvent] {
+    private mutating func startBreak(_ kind: BreakKind, now: Date,
+                                     mergeReason: BreakMergeReason? = nil) -> [SchedulerEvent] {
         let session = BreakSession(
             kind: kind,
             startedAt: now,
             endsAt: now + settings[kind].duration,
-            postponeCount: timers[kind]?.postponeCount ?? 0
+            postponeCount: timers[kind]?.postponeCount ?? 0,
+            mergeReason: mergeReason
         )
         // 防止长休息刚推迟/刚开始，微休息就紧接着弹出来
         resetLowerPriorityTimers(than: kind, now: now)
@@ -378,6 +445,7 @@ struct BreakScheduler: Sendable {
         // 高优先级休息完成后，低优先级的休息再从头算
         if reason == .completed {
             resetLowerPriorityTimers(than: kind, now: now)
+            lastBreakCompletedAt = now
         }
         state = stateAfterBreak ?? .running
         stateAfterBreak = nil

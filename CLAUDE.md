@@ -2,10 +2,14 @@
 
 > 这份文件只放**当前状态、规则、偏好、坑和文档索引**。各功能的实现细节在 `docs/项目细节.md`（按阶段分节），设计和计划在 `docs/superpowers/`，每次改了什么看 `git log`。改完功能要同步更新对应的地方，这里只留结论。
 
-## 当前状态（2026-10-29）
+## 当前状态（2026-11-03）
+- **当前正式版 0.7.2**（2026-11-03 发布）：GitHub 上只有「星期五 0.7.2」一个提交（叠在 0.7.0 之上），标签 `v0.7.2`，Release 附 `Friday-0.7.2.dmg`；本地 DMG `发布/星期五-0.7.2.dmg`。0.7.2 = 0.7.1 的休息合并 + 剪贴板历史。下面 0.7.0 / 0.7.1 两条是历史记录。
 - 版本 **0.7.0**（改名「星期五」后的第一个正式包），已合进 main；GitHub（`lizhiming97/RestBreak`，**2026-10-29 起公开开源，MIT**）上只有一个「星期五 0.7.0」提交，标签 `v0.7.0`，DMG 挂在 GitHub Releases。DMG `发布/星期五-0.7.0.dmg`，用户装到「应用程序」开始深度体验，问题攒着统一调整。0.6.2 没有单独发，两个修复（菜单开着时截图快捷键、首次点设置不弹窗）都在 0.7.0 里。
 - 0.7 内容：App 只做「嘴」（灵动岛 + 到点提醒 + 推送关卡），说什么由用户主要用的 Agent 巡视后 `push`；接入是**本机 MCP 地址 + 密钥**（`http://127.0.0.1:38128/mcp`，服务名 `friday`，像瑞幸 MCP 一样交给用户的 AI 自己加，**不扫描用户的 App**），另给巡视任务说明（**定时间隔由用户在自己的 AI 应用里设**）；设置「提醒」页只有「功能接入 / 记录」两个分段，**留意什么写在 Agent 的定时任务里，App 不重复配置**（用户要求，不要再加回关注方向）。细节见 `docs/项目细节.md` 第七阶段。
 - 用户在体验中提过、先不改的：站会结束后马上弹休息（开会/离开判定有偏差，原因和两种改法见 2026-10-29 的对话：麦克风开着但人没看屏幕、短暂离开不满 5 分钟；用户说再用一段时间再定）。
+- **0.7.1 本地测试包**（2026-10-30）：`发布/星期五-0.7.1.dmg`，只给用户自己装来体验，**没推 GitHub、没打标签、没发 Release**。内容：微休息和长休息挨得太近时合并成长休息（临近合并 + 会前合并），设计 `docs/superpowers/specs/2026-10-29-break-merge-design.md`，规则见 `docs/项目细节.md`「调度引擎设计」。用户体验没问题后，再和攒着的其他问题一起正式发版（到时按「发版」一节补标签、推 GitHub）。
+
+- **剪贴板历史**（2026-11-03，Codex 做的 PR 1，挑进本地 main 后随 0.7.2 发布，PR 1 已关闭）：默认关闭，开启后记录文字和图片，搜索 / 固定 / 纯文本复制 / 排除应用，普通历史超过 7 天自动清理（固定的保留），菜单「剪贴板历史…」、设置「剪贴板」页、全局快捷键三个入口；数据在 `~/Library/Application Support/FridayClipboard`（沙盒容器内）。审查时修了：面板里「清空全部」确认框会把面板一起关掉、快捷键在「快捷键」页重复出现。**待用户真机试**：面板里的「清空全部历史…」、超过 7 天的历史是否被清掉、锁屏/睡眠后是否停止记录。以后别的 AI 交来的 PR 也**不要在 GitHub 上直接合并**：挑进本地 main，随发版推上去后关 PR。**自动粘贴（实验）用户说用不到，已去掉，不要再加回来。**实现与验证细节见 `docs/clipboard/`。
 
 - 待用户手动验证的旧项：`docs/superpowers/specs/2026-10-23-agent-step0-findings.md` 末尾的清单（Claude Desktop `.mcpb`、ChatGPT App 里的 Codex 等）。
 
@@ -28,7 +32,7 @@
   xcodebuild -scheme RestBreak -configuration Debug -derivedDataPath "$DD" build -allowProvisioningUpdates
   xcodebuild test -scheme RestBreak -destination platform=macOS -derivedDataPath "$DD" -allowProvisioningUpdates
   ```
-  2026-10-26 共 261 个测试。改了调度规则，`DaySimulationTests`（逐秒模拟 20 个工作日）和 `AdaptiveTickTests`（逐秒和按需两种跑法，结果必须一致）必须跑通。
+  2026-11-03 共 286 个测试。改了调度规则，`DaySimulationTests`（逐秒模拟 20 个工作日）和 `AdaptiveTickTests`（逐秒和按需两种跑法，结果必须一致）必须跑通。
 - 不要用 `open` 命令替用户启动 App：Xcode 调试器挂着的旧实例关不掉，会留下两个实例（`SingleInstance` 的规则是新启动的留下）。
 - 直接运行小程序、访问 App Group、跑 `codesign` / `hdiutil` 这类命令，要在 shell 沙盒外执行。
 
@@ -37,7 +41,7 @@
 - **GitHub 上只放「当前版本」**（用户要求）：远端只有 `main` 一个分支、每个版本一个提交、只有最新版本的标签和 Release；**完整开发历史只在本地 `main`**。本地分支 `public` 跟踪 `origin/main`，本地 `main` 不跟踪远端，**绝不能 `git push origin main`**（会把全部历史推上去）。发布新版本：
   ```
   S=$(git commit-tree "main^{tree}" -p public -m "星期五 X.Y.Z …")   # 用本地 main 的内容在 public 上叠一个提交
-  git branch -f public $S && git push origin public:main && git push origin $S:refs/tags/vX.Y.Z
+  git branch -f public $S && git push origin public:main && git push origin "${S}:refs/tags/vX.Y.Z"   # zsh 里要写 ${S}，$S:r 会被当成修饰符
   ```
   然后 `gh release create vX.Y.Z` 上传英文名 DMG，删掉上一个版本的 Release 和标签（`gh release delete vA.B.C --cleanup-tag`）。只改文档也按这个流程推。**公开仓库里不能放别人的东西和任何密钥**：`设计/灵动岛参考/`（别人项目的截图）已从全部历史中清除并加进 `.gitignore`（清除前的完整备份在 `~/Desktop/Project_Hub/scratch/RestBreak-backup-before-filter-*.git`）。提交前照旧检查日志、临时测试、密钥。
 
@@ -68,6 +72,7 @@
   - 菜单栏倒计时换数字时也醒，最长 60 秒一次，误差 2 秒；
   - 推迟中逐秒。
   - 平均每天约 2700 次（逐秒是 28800 次）。
+  - 例外：剪贴板历史开启时每 0.5 秒看一次剪贴板 `changeCount`（macOS 没有剪贴板变化通知，只能这样；没变化时不读内容、不写盘），关闭、暂停、锁屏、睡眠时停。
 - **少写盘**：
   - 统计：有变化时最多 15 分钟写一次，有休息事件、睡眠、退出时立即写；
   - 提醒数据：`checkedAt` 放在内存里，只有提醒或记录真的变了才写 `store.json`；
@@ -105,6 +110,7 @@
   - 设置窗口样式；
   - 截图、标注、OCR 翻译；
   - AI 派提醒（0.5）、管家骨架（0.6）、App 只做「嘴」（0.7）。
+- `docs/clipboard/`：剪贴板历史的调研、实现边界和验证记录（参考了 Maccy，MIT 声明在 `RestBreak/RestBreak/ThirdParty/`）。
 - `docs/superpowers/specs/`：各功能的设计文档。管家方向以 `2026-10-28-agent-driven-redesign.md` 为准（App 只做「嘴」）；`2026-10-24-butler-v2-design.md` 的五种来意、推送关卡仍有效，内置规则和 0.7 / 0.8 规划已被取代。
 - `docs/superpowers/plans/`：各次的实现计划。开头一行「状态」写明是否完成；以后新的计划做完一步就打勾，当作进度表。
 - `对外文档/`：项目介绍和开发复盘（给别人看的）。

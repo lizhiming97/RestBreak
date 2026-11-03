@@ -11,6 +11,8 @@ struct BreakOverlayContent {
     let canPostpone: Bool
     let canSkip: Bool
     var background: OverlayBackground = .frosted
+    /// 合并来的休息在标题下多一行说明（比如「顺便把长休息提前了 9 分钟」）
+    var note: String? = nil
 }
 
 /// 管理全屏休息遮罩：每块屏幕一个窗口，淡入淡出
@@ -166,10 +168,17 @@ struct BreakOverlayView: View {
                                   duration: content.endsAt.timeIntervalSince(content.startedAt))
 
             VStack(spacing: 36) {
-                Text(content.title)
-                    .font(.system(size: 17, weight: .medium))
-                    .tracking(6)
-                    .foregroundStyle(.white.opacity(0.6))
+                VStack(spacing: 10) {
+                    Text(content.title)
+                        .font(.system(size: 17, weight: .medium))
+                        .tracking(6)
+                        .foregroundStyle(.white.opacity(0.6))
+                    if let note = content.note {
+                        Text(note)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                }
 
                 Text(content.suggestion)
                     .font(.system(size: 34, weight: .semibold, design: .rounded))

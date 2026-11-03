@@ -55,20 +55,19 @@ struct BreakSchedulerTests {
 
     // MARK: - 优先级
 
-    @Test func 长休息5分钟内也要到期时跳过微休息() {
+    @Test func 长休息快到时_微休息直接升级成长休息() {
         var custom = settings
         custom[.micro].interval = minutes(57)   // 微休息 57 分到期，长休息 60 分到期
         var s = BreakScheduler(settings: custom, now: t0)
         let now = t0 + minutes(57)
-        #expect(s.tick(now: now, idleSeconds: 0).isEmpty)
-        #expect(s.timers[.micro]?.dueDate == now + minutes(57))
-
-        // 3 分钟后长休息正常开始
-        let events = s.tick(now: t0 + minutes(60), idleSeconds: 0)
+        // 57 分就做长休息（提前 3 分钟），不再等到 60 分
+        let events = s.tick(now: now, idleSeconds: 0)
         guard case .breakStarted(let session) = events.first else {
             Issue.record("应该开始长休息"); return
         }
         #expect(session.kind == .long)
+        #expect(session.mergeReason == .nearbyLong(advancedBy: minutes(3)))
+        #expect(s.timers[.micro]?.dueDate == now + minutes(57))
     }
 
     @Test func 开始长休息时重置微休息_完成后再重置一次() {
@@ -202,16 +201,17 @@ struct BreakSchedulerTests {
 
     // MARK: - 下次休息
 
-    @Test func 下次休息考虑优先级跳过规则() {
+    @Test func 下次休息考虑合并规则() {
         var custom = settings
         custom[.micro].interval = minutes(57)
         let s = BreakScheduler(settings: custom, now: t0)
-        let next = s.nextBreak()
+        let next = s.nextBreak(now: t0)
         #expect(next?.kind == .long)
-        #expect(next?.dueDate == t0 + minutes(60))
+        #expect(next?.dueDate == t0 + minutes(57))   // 合并后在微休息到点时就做长休息
+        #expect(next?.merged == true)
 
         let normal = BreakScheduler(settings: settings, now: t0)
-        #expect(normal.nextBreak()?.kind == .micro)
+        #expect(normal.nextBreak(now: t0)?.kind == .micro)
     }
 }
 

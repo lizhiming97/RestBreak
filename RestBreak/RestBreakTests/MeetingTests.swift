@@ -21,7 +21,10 @@ struct MeetingTests {
     }
 
     @Test func 会议中到期的休息先不弹_会议结束1分钟后再弹() {
-        var s = BreakScheduler(settings: settings, now: t0)
+        // 长休息调远，免得散会时长休息也快到了、被合并成长休息（合并见 BreakMergeTests）
+        var custom = settings
+        custom[.long].interval = minutes(120)
+        var s = BreakScheduler(settings: custom, now: t0)
         // 第 15～45 分钟在开会，第 20 分钟微休息到期但不弹
         #expect(runMeeting(&s, from: t0 + minutes(15), to: t0 + minutes(45)).isEmpty)
         #expect(s.isInMeeting)

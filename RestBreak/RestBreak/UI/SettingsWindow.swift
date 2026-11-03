@@ -134,6 +134,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case reminders = "提醒"
     case smart = "智能避让"
     case personal = "外观与快捷键"
+    case clipboard = "剪贴板"
     case screenshot = "截图"
 
     var id: Self { self }
@@ -145,6 +146,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .reminders: "bell"
         case .smart: "sparkles"
         case .personal: "paintpalette"
+        case .clipboard: "doc.on.clipboard"
         case .screenshot: "camera.viewfinder"
         }
     }
@@ -194,6 +196,7 @@ struct SettingsView: View {
                     case .reminders: RemindersPage()
                     case .smart: SmartPage()
                     case .personal: PersonalPage()
+                    case .clipboard: ClipboardSettingsPage()
                     case .screenshot: ScreenshotPage()
                     }
                 }
@@ -828,7 +831,7 @@ private struct ShortcutsPage: View {
     @StateObject private var recorder = ShortcutRecorder()
 
     var body: some View {
-        ShortcutCard(title: "全局快捷键", actions: ShortcutAction.allCases.filter { !$0.isScreenshot },
+        ShortcutCard(title: "全局快捷键", actions: ShortcutAction.allCases.filter(\.isGeneral),
                      recorder: recorder)
 
         Text("点击右侧方框后按下想要的组合键，至少包含 ⌃、⌥、⌘ 之一（F1～F20 可单独使用）。录制时按 Esc 取消，按删除键清除。")
