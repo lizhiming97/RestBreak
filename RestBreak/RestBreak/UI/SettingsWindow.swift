@@ -132,6 +132,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case stats = "统计"
     case rest = "休息"
     case reminders = "提醒"
+    case mouse = "鼠标"
     case smart = "智能避让"
     case personal = "外观与快捷键"
     case screenshot = "截图"
@@ -143,6 +144,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .stats: "chart.bar"
         case .rest: "clock"
         case .reminders: "bell"
+        case .mouse: "computermouse"
         case .smart: "sparkles"
         case .personal: "paintpalette"
         case .screenshot: "camera.viewfinder"
@@ -192,6 +194,7 @@ struct SettingsView: View {
                     case .stats: StatsPage()
                     case .rest: RestPage()
                     case .reminders: RemindersPage()
+                    case .mouse: MouseCompanionPage()
                     case .smart: SmartPage()
                     case .personal: PersonalPage()
                     case .screenshot: ScreenshotPage()

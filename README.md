@@ -50,6 +50,10 @@ xcodebuild test -scheme RestBreak -destination platform=macOS -allowProvisioning
 
 唯一的第三方依赖是官方 [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk)，只有命令行小程序 `restbreak-mcp` 用到。
 
+## 可选鼠标组件（开发验证版）
+
+可选鼠标组件 `MouseCompanion/` 复用 Caldis/Mos 的滚动核心，采用 **CC BY-NC 4.0（非商业）**，不适用主程序 MIT。来源、改动及剥离方式见 [组件说明](MouseCompanion/UPSTREAM.md)。开发验证版可从设置「鼠标」进入，构建方式见 [MouseCompanion/README.md](MouseCompanion/README.md)；当前正式下载包不包含此功能。
+
 ## 文档
 
 - [对外文档](对外文档/README.md)：项目介绍、开发复盘、踩过的坑、通俗版架构

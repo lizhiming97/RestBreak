@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.screenshots.onOpenSettings = { settingsWindow.show(page: .screenshot) }
         coordinator.reminders.onOpenPage = { settingsWindow.show(page: .reminders) }
         coordinator.start()
+        MouseCompanionClient.shared.launchIfUsed()
 
         self.coordinator = coordinator
         self.settingsWindow = settingsWindow
