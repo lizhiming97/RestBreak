@@ -29,6 +29,7 @@ final class ReminderCoordinator: NSObject, ObservableObject {   // NSObject：�
     private var memoryCheckedAt: Date?
     private var lastPlanAt = Date.distantPast
     private var task: Task<Void, Never>?
+    private var clockTokens: [NSObjectProtocol] = []
     private static let maxCardWait: TimeInterval = 30 * 60
 
     init(store: ReminderStore? = try? ReminderStore.shared()) {
@@ -44,9 +45,10 @@ final class ReminderCoordinator: NSObject, ObservableObject {   // NSObject：�
             DispatchQueue.main.async { NotificationCenter.default.post(name: .reminderStoreChanged, object: nil) }
         }, DarwinNotice.remindersChanged as CFString, nil, .deliverImmediately)
         NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .reminderStoreChanged, object: nil)
-        // 改了系统时间、时区，过了零点，从睡眠醒来：重新处理并重新登记
-        for name in [Notification.Name.NSSystemClockDidChange, .NSSystemTimeZoneDidChange, .NSCalendarDayChanged] {
-            NotificationCenter.default.addObserver(self, selector: #selector(clockChanged), name: name, object: nil)
+        // 改了系统时间、时区，过了零点，从睡眠醒来：重新处理并重新登记。
+        // 前三个系统会从后台线程发，必须转到主线程（直接用 selector 会在零点闪退）
+        clockTokens = MainThreadObserver.observe([.NSSystemClockDidChange, .NSSystemTimeZoneDidChange, .NSCalendarDayChanged]) {
+            [weak self] in self?.clockChanged()
         }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(clockChanged),
                                                           name: NSWorkspace.didWakeNotification, object: nil)
