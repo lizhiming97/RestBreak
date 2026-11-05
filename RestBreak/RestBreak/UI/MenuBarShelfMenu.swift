@@ -63,6 +63,26 @@ enum MenuBarShelfMenu {
         return icon
     }
 
+    /// 左键能调到前台的应用：正在运行、有程序坞图标（普通应用）。图标属于主程序包里的辅助程序时
+    /// （如飞书的 Lark Helper、WPS 的 wpscloudsvr），打开外层的主程序。系统项、只在菜单栏运行的应用返回 nil。
+    static func foregroundApp(for entry: Snapshot.Entry) -> URL? {
+        guard let id = entry.bundleID, !id.hasPrefix("com.apple."),
+              let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first,
+              let url = app.bundleURL else { return nil }
+        if let outer = outermostApp(containing: url), outer != url { return outer }
+        return app.activationPolicy == .regular ? url : nil
+    }
+
+    /// 路径里第一个 .app：/Applications/Lark.app/Contents/…/Lark Helper.app → /Applications/Lark.app
+    static func outermostApp(containing url: URL) -> URL? {
+        var result = URL(fileURLWithPath: "/")
+        for component in url.standardizedFileURL.pathComponents.dropFirst() {
+            result.appendPathComponent(component)
+            if component.hasSuffix(".app") { return result }
+        }
+        return nil
+    }
+
     /// 加到菜单里；`menu` 关闭后再发命令，避免模拟点击撞上正在跟踪的菜单。
     static func add(to menu: NSMenu, target: AnyObject, fallback: Selector, settings: Selector) {
         guard let snapshot = load() else {
@@ -94,7 +114,7 @@ enum MenuBarShelfMenu {
         for entry in snapshot.entries {
             // 自定义视图里的开关点了不会关菜单，可以一次改多个
             let item = NSMenuItem()
-            item.view = SwitchRowView(entry: entry, width: rowWidth, enabled: !snapshot.pendingRestore)
+            item.view = SwitchRowView(entry: entry, width: rowWidth, enabled: true)
             submenu.addItem(item)
         }
         submenu.addItem(.separator())
@@ -108,7 +128,7 @@ enum MenuBarShelfMenu {
             let all = NSMenuItem(title: "全部显示", action: #selector(Actions.command(_:)), keyEquivalent: "")
             all.target = Actions.shared
             all.representedObject = "reveal-all"
-            all.isEnabled = !snapshot.pendingRestore
+            all.isEnabled = true
             submenu.addItem(all)
         }
         let open = NSMenuItem(title: "收纳设置…", action: settings, keyEquivalent: "")
@@ -165,7 +185,7 @@ private final class HiddenIconsView: NSView {
         var x = Self.inset
         for button in buttons {
             button.setFrameOrigin(NSPoint(x: x, y: (Self.rowHeight - button.frame.height) / 2))
-            button.onClick = { [weak self] key, right in self?.open(key, right: right) }
+            button.onClick = { [weak self] entry, right in self?.open(entry, right: right) }
             addSubview(button)
             x += button.frame.width + 2
         }
@@ -173,16 +193,25 @@ private final class HiddenIconsView: NSView {
     }
     required init?(coder: NSCoder) { nil }
 
-    private func open(_ key: String, right: Bool) {
+    /// 左键：有窗口的普通应用调到前台（同程序坞点击）；系统项、只在菜单栏的应用仍打开原菜单。右键：打开原菜单。
+    private func open(_ entry: MenuBarShelfMenu.Snapshot.Entry, right: Bool) {
         menuRef.cancelTracking()
-        MenuBarShelfMenu.Actions.shared.send("open", key: key, button: right ? "right" : "left")
+        if !right, let app = MenuBarShelfMenu.foregroundApp(for: entry) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.addsToRecentItems = false
+            // 已在运行时 LaunchServices 会发「重新打开」，没有窗口的应用会自己开一个主窗口
+            NSWorkspace.shared.openApplication(at: app, configuration: configuration) { _, _ in }
+            return
+        }
+        MenuBarShelfMenu.Actions.shared.send("open", key: entry.key, button: right ? "right" : "left")
     }
 }
 
 private final class IconButton: NSView {
     private let entry: MenuBarShelfMenu.Snapshot.Entry
     private let image: NSImage?
-    var onClick: ((String, Bool) -> Void)?
+    var onClick: ((MenuBarShelfMenu.Snapshot.Entry, Bool) -> Void)?
     private var hovering = false { didSet { needsDisplay = true } }
 
     init(entry: MenuBarShelfMenu.Snapshot.Entry) {
@@ -190,7 +219,7 @@ private final class IconButton: NSView {
         image = MenuBarShelfMenu.image(for: entry, height: 18)
         let width = max(26, (image?.size.width ?? 16) + 10)
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 24))
-        toolTip = entry.name
+        toolTip = MenuBarShelfMenu.foregroundApp(for: entry) == nil ? entry.name : "\(entry.name)\n点击打开，右键显示菜单"
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel(entry.name)
@@ -227,9 +256,9 @@ private final class IconButton: NSView {
 
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
-    override func mouseUp(with event: NSEvent) { onClick?(entry.key, false) }
-    override func rightMouseUp(with event: NSEvent) { onClick?(entry.key, true) }
-    override func accessibilityPerformPress() -> Bool { onClick?(entry.key, false); return true }
+    override func mouseUp(with event: NSEvent) { onClick?(entry, false) }
+    override func rightMouseUp(with event: NSEvent) { onClick?(entry, true) }
+    override func accessibilityPerformPress() -> Bool { onClick?(entry, false); return true }
 }
 
 /// 子菜单里的一行：图标 + 名称 + 开关。系统固定项和星期五自己显示「固定」。

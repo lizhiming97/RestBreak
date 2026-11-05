@@ -140,20 +140,15 @@ public final class ShelfController: NSObject, ObservableObject {
 
     @objc private func environmentChanged() {
         dismissShelf()
-        // 插拔屏幕、切换桌面、唤醒都保持收起（不自动移动任何图标）；只有临时图标待归位时才放开占位，
-        // 且不在另一块屏或另一个桌面上自动移动。
-        if isCollapsed, pending != nil {
-            divider?.length = expandedWidth
-            isCollapsed = false
-        }
-        returnTask?.cancel()
-        returnTask = nil
+        // 插拔屏幕、切换桌面、唤醒都保持收起。点开收起图标的菜单时，对方应用常会切换桌面或激活窗口，
+        // 以前这里会放开占位（所有图标都跑出来）并停掉自动归位，开关也一直灰着；现在只继续按退避重试归位，
+        // 归位本身会检查桌面是否一致，不会在另一个桌面上移动。
         if let pending, Self.screen(for: pending.displayID) == nil {
             // 那块屏上的窗口副本已随屏幕消失，无法可靠归位；图标留在可见区域。
             clearPending()
             message = ShelfError.displayRemoved.localizedDescription
         } else if pending != nil {
-            message = "屏幕或桌面已变化，临时图标保留可见。回到原来的屏幕和桌面后点击“恢复临时图标”。"
+            scheduleRestore()
         }
         refresh()
     }
@@ -282,9 +277,9 @@ public final class ShelfController: NSObject, ObservableObject {
         case "hide": setHidden(item.id, hidden: true, on: listDisplayID)
         case "show": setHidden(item.id, hidden: false, on: listDisplayID)
         case "open":
-            // 在用户点开星期五菜单的那块屏上打开：换成该屏上同一图标的那份窗口。
-            guard let screen = pointerScreen else { return }
-            let target = Self.displayID(of: screen)
+            // 在主屏那份图标上打开。实测在外接屏的副本上临时移动会连续失败；macOS 26 各屏图标位置联动，
+            // 主屏移出来后外接屏也会出现，点击直接发给来源应用。
+            let target = listDisplayID
             guard let copy = keyedItems(on: target).first(where: { $0.key == key })?.item else {
                 message = ShelfError.dividerMissing.localizedDescription; return
             }
@@ -312,7 +307,7 @@ public final class ShelfController: NSObject, ObservableObject {
     /// `displayID` 为图标副本所在的屏幕；顺序全局一致，所有屏一起生效。
     public func setHidden(_ id: CGWindowID, hidden: Bool, on displayID: CGDirectDisplayID? = nil) {
         guard isEnabled, !isStopping else { return }
-        guard pending == nil else { message = ShelfError.pendingRestore.localizedDescription; return }
+        // 有临时图标没归位时不再拒绝：执行前先把它放回去（见 drainToggles）
         guard !movingIDs.contains(id) else { return }
         toggleQueue.append((id, stableKey(for: id), hidden, displayID))
         movingIDs.insert(id)
@@ -337,6 +332,10 @@ public final class ShelfController: NSObject, ObservableObject {
             self.reloadPanel()
             self.drainToggles()
         }) { [self] in
+            if pending != nil {
+                do { try await restoreIfPossible(force: true) }
+                catch { clearPending() }   // 放不回原位也不卡住开关；图标留在常显区，可再收起
+            }
             guard let displayID = request.displayID ?? listDisplayID,
                   let separator = layout(on: displayID)?.divider else { throw ShelfError.dividerMissing }
             // 排队期间窗口编号可能已换到另一块屏：按稳定标识在目标屏上重新找到这个图标。
@@ -566,6 +565,11 @@ public final class ShelfController: NSObject, ObservableObject {
         returnTask = nil
         pending = nil
         hasPendingRestore = false
+        // 旧版本或异常情况下占位被放开过：归位完成后收回去
+        if isEnabled, !isStopping, !isCollapsed, let divider {
+            divider.length = collapsedWidth
+            isCollapsed = true
+        }
         reloadPanel()
         publishSnapshot()
     }

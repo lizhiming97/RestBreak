@@ -115,30 +115,27 @@ public final class ScrollEngine {
             if smoother.active { cancelMotion() }
             return Unmanaged.passUnretained(event)
         }
-        guard ScrollEventAdapter.isDiscreteWheel(event), !event.flags.contains(.maskControl),
-              !event.flags.contains(.maskCommand) else {
+        guard ScrollEventAdapter.isDiscreteWheel(event) else {
             cancelMotion()
             return Unmanaged.passUnretained(event)
         }
         let rawPID = event.getIntegerValueField(.eventTargetUnixProcessID)
-        guard rawPID > 0, rawPID <= Int64(Int32.max) else {
-            // 无法识别真正接收窗口时不猜前台 App，保持系统行为。
-            cancelMotion()
-            return Unmanaged.passUnretained(event)
-        }
-        let pid = pid_t(rawPID)
+        let pid: pid_t = rawPID > 0 && rawPID <= Int64(Int32.max) ? pid_t(rawPID) : 0
         // 只在换了接收进程时重新起步；同一进程里挪动位置或停顿后续滚，沿用剩余惯性继续累积（与 Mos 一致）。
         if pid != targetPID {
             cancelMotion()
             targetPID = pid
-            targetBundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+            targetBundleID = pid > 0 ? NSRunningApplication(processIdentifier: pid)?.bundleIdentifier : nil
         }
         if let targetBundleID, configuration.excludedApps.contains(targetBundleID) {
             cancelMotion()
             return Unmanaged.passUnretained(event)
         }
-        if configuration.reverseVertical { ScrollEventAdapter.reverse(event, horizontal: false) }
-        if configuration.reverseHorizontal { ScrollEventAdapter.reverse(event, horizontal: true) }
+        // 方向反转对所有普通滚轮都生效；按住 Ctrl/Command（缩放）或认不出接收进程时只反转、不平滑。
+        guard Self.applyDirection(event, configuration: configuration), pid > 0 else {
+            cancelMotion()
+            return Unmanaged.passUnretained(event)
+        }
         let y = ScrollEventAdapter.value(event, horizontal: false)
         let x = ScrollEventAdapter.value(event, horizontal: true)
         let smoothY = configuration.smoothVertical ? y : 0
@@ -157,6 +154,14 @@ public final class ScrollEngine {
         if smoothX != 0 { ScrollEventAdapter.clear(event, horizontal: true) }
         let remaining = ScrollEventAdapter.value(event, horizontal: false) != 0 || ScrollEventAdapter.value(event, horizontal: true) != 0
         return remaining ? Unmanaged.passUnretained(event) : nil
+    }
+
+    /// 按设置反转方向；返回这次滚动能不能平滑。按住 Ctrl/Command 是在缩放，只反转不平滑，
+    /// 免得「Ctrl+上滚放大」的方向和平时滚动对不上（与 Mos 一致：修饰键只挡平滑，不挡反转）。
+    static func applyDirection(_ event: CGEvent, configuration: ScrollConfiguration) -> Bool {
+        if configuration.reverseVertical { ScrollEventAdapter.reverse(event, horizontal: false) }
+        if configuration.reverseHorizontal { ScrollEventAdapter.reverse(event, horizontal: true) }
+        return !event.flags.contains(.maskControl) && !event.flags.contains(.maskCommand)
     }
 
     private func queueFrame() {

@@ -42,4 +42,13 @@ struct MenuBarCompanionTests {
         #expect(SettingsPage.reminders.rawValue == "Agent主动关怀")
         #expect(SettingsPage.screenshot.rawValue == "截图")
     }
+
+    @Test func 辅助程序的图标打开外层主程序() {
+        let helper = URL(fileURLWithPath: "/Applications/Lark.app/Contents/Frameworks/Lark Framework.framework/Versions/1/Helpers/Lark Helper.app")
+        #expect(MenuBarShelfMenu.outermostApp(containing: helper)?.path == "/Applications/Lark.app")
+        let wps = URL(fileURLWithPath: "/Applications/wpsoffice.app/Contents/SharedSupport/wpscloudsvr.app")
+        #expect(MenuBarShelfMenu.outermostApp(containing: wps)?.path == "/Applications/wpsoffice.app")
+        let plain = URL(fileURLWithPath: "/Applications/CC Switch.app")
+        #expect(MenuBarShelfMenu.outermostApp(containing: plain) == plain)
+    }
 }

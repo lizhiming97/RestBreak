@@ -139,6 +139,20 @@ final class ScrollTests: XCTestCase {
         XCTAssertNil(SharedStore.decodeConfiguration(Data("{}".utf8)))
     }
 
+    func testCtrlAndCommandScrollKeepReversedDirectionButSkipSmoothing() throws {
+        // 用户开了反转：按住 Ctrl/Command 缩放时方向也要反转，否则「Ctrl+上滚放大」会变成缩小（与 Mos 一致）。
+        var config = configuration(); config.reverseVertical = true
+        for flag in [CGEventFlags.maskControl, .maskCommand] {
+            let event = try wheel(y: 2)
+            let before = ScrollEventAdapter.value(event, horizontal: false)
+            event.flags = flag
+            XCTAssertFalse(ScrollEngine.applyDirection(event, configuration: config))
+            XCTAssertEqual(ScrollEventAdapter.value(event, horizontal: false), -before)
+        }
+        let plain = try wheel(y: 2)
+        XCTAssertTrue(ScrollEngine.applyDirection(plain, configuration: config))
+    }
+
     func testFractionalFramesRetainDistanceAndReversePromptly() {
         var pixels = PixelAccumulator()
         let total = (0..<100).reduce(0.0) { sum, _ in sum + pixels.take(0.25) }
