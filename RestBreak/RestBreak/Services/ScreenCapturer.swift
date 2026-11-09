@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import ScreenCaptureKit
+import CoreMedia
 
 /// 读取本机的系统快捷键表（系统设置 › 键盘 › 键盘快捷键 里的那些）
 enum SystemHotKeys {
@@ -105,6 +106,74 @@ enum ScreenCapturer {
         return screens.indices.compactMap { index in
             images[index].map { ScreenSnapshot(screen: screens[index], image: $0, targets: targets[index]) }
         }
+    }
+
+    /// 长截图用：连续录一块区域（ScreenCaptureKit 画面流，最多每秒 30 帧），排除星期五自己的窗口。
+    /// 只在长截图期间运行；画面不变时系统不发新帧，几乎不耗电
+    final class RegionStream: NSObject, SCStreamOutput, @unchecked Sendable {
+        private let stream: SCStream
+        private let onFrame: @Sendable (CGImage) -> Void
+        private let queue = DispatchQueue(label: "com.lizhiming.RestBreak.scroll-stream", qos: .userInitiated)
+
+        fileprivate init(filter: SCContentFilter, config: SCStreamConfiguration, onFrame: @escaping @Sendable (CGImage) -> Void) throws {
+            stream = SCStream(filter: filter, configuration: config, delegate: nil)
+            self.onFrame = onFrame
+            super.init()
+            try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        }
+
+        func start() async throws { try await stream.startCapture() }
+        func stop() { Task { try? await stream.stopCapture() } }
+
+        func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+            guard type == .screen, sampleBuffer.isValid,
+                  let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+                  let raw = attachments.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete,
+                  let pixels = CMSampleBufferGetImageBuffer(sampleBuffer),
+                  let image = Self.copyImage(pixels) else { return }
+            onFrame(image)
+        }
+
+        /// 画面缓冲区会被系统复用，拷一份成独立的 CGImage
+        private static func copyImage(_ buffer: CVPixelBuffer) -> CGImage? {
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+            let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+            let data = Data(bytes: base, count: bytesPerRow * height)
+            guard let provider = CGDataProvider(data: data as CFData),
+                  let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+            return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
+                           space: space,
+                           bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                                    | CGBitmapInfo.byteOrder32Little.rawValue),
+                           provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        }
+    }
+
+    /// rect：全局屏幕坐标（左下角原点，点）
+    static func streamRegion(_ rect: NSRect, on screen: NSScreen,
+                             onFrame: @escaping @Sendable (CGImage) -> Void) async throws -> RegionStream {
+        guard let id = screen.displayID else { throw CocoaError(.featureUnsupported) }
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first(where: { $0.displayID == id }) else { throw CocoaError(.featureUnsupported) }
+        let me = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+        let filter = SCContentFilter(display: display, excludingApplications: me, exceptingWindows: [])
+        let config = SCStreamConfiguration()
+        // sourceRect 是显示器内的点坐标，左上角原点
+        let local = rect.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
+        config.sourceRect = CGRect(x: local.minX, y: screen.frame.height - local.maxY, width: local.width, height: local.height)
+        config.width = Int((rect.width * screen.backingScaleFactor).rounded())
+        config.height = Int((rect.height * screen.backingScaleFactor).rounded())
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+        config.queueDepth = 3
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = false
+        config.colorSpaceName = CGColorSpace.sRGB
+        let stream = try RegionStream(filter: filter, config: config, onFrame: onFrame)
+        try await stream.start()
+        return stream
     }
 
     /// 截一块屏需要的参数。ScreenCaptureKit 的这两个类型没标 Sendable，但我们只读不改

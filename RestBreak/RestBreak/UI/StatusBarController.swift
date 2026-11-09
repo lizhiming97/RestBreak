@@ -100,13 +100,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func checkShortcutKeys() {
         let flags = UInt(CGEventSource.flagsState(.combinedSessionState).rawValue) & KeyShortcut.allModifierFlags
         let shortcuts = coordinator.settings.shortcuts
-        let pressed = [ShortcutAction.captureScreen, .pinClipboard, .clipboardHistory].first { action in
+        let pressed = [ShortcutAction.captureScreen, .scrollingCapture, .pinClipboard, .clipboardHistory].first { action in
             guard let s = shortcuts[action] else { return false }
             return s.modifiers == flags && CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(s.keyCode))
         }
         defer { keyWasDown = pressed != nil }
         guard let action = pressed, !keyWasDown else { return }
-        if action == .captureScreen {
+        if action == .captureScreen || action == .scrollingCapture {
             coordinator.screenshots.onOverlayShown = { [weak self] in self?.menu.cancelTracking() }
             coordinator.performShortcutFromMenu(action)
         } else {

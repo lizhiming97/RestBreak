@@ -6,11 +6,12 @@ enum ShortcutAction: String, Codable, CaseIterable, CodingKeyRepresentable, Send
     case togglePause       // 暂停 / 恢复
     case skipNextBreak     // 跳过下一次休息（休息中则跳过当前这次）
     case captureScreen     // 截图
+    case scrollingCapture  // 长截图：框选后直接开始滚动拼接
     case pinClipboard      // 把剪贴板内容贴到桌面
     case clipboardHistory  // 查找之前复制过的文字和图片
 
     /// 截图相关的操作在设置「截图」页显示，剪贴板历史在「剪贴板」页，其他在「快捷键」页
-    var isScreenshot: Bool { self == .captureScreen || self == .pinClipboard }
+    var isScreenshot: Bool { self == .captureScreen || self == .scrollingCapture || self == .pinClipboard }
     var isGeneral: Bool { !isScreenshot && self != .clipboardHistory }
 
     var title: String {
@@ -19,6 +20,7 @@ enum ShortcutAction: String, Codable, CaseIterable, CodingKeyRepresentable, Send
         case .togglePause: "暂停 / 恢复"
         case .skipNextBreak: "跳过下一次休息"
         case .captureScreen: "截图"
+        case .scrollingCapture: "长截图"
         case .pinClipboard: "贴剪贴板"
         case .clipboardHistory: "剪贴板历史"
         }
@@ -30,6 +32,7 @@ enum ShortcutAction: String, Codable, CaseIterable, CodingKeyRepresentable, Send
         case .togglePause: "暂停直到再按一次"
         case .skipNextBreak: "休息中按下则跳过当前这次；严格模式下无效"
         case .captureScreen: "框选屏幕区域，复制、保存或贴到桌面"
+        case .scrollingCapture: "框好区域后滚动页面，自动拼成一张长图"
         case .pinClipboard: "把剪贴板里的图片或文字贴到桌面"
         case .clipboardHistory: "搜索、固定和取用之前复制的内容"
         }

@@ -49,7 +49,7 @@ struct ShortcutTests {
     }
 
     @Test func 截图快捷键和休息快捷键分开显示() {
-        #expect(ShortcutAction.allCases.filter(\.isScreenshot) == [.captureScreen, .pinClipboard])
+        #expect(ShortcutAction.allCases.filter(\.isScreenshot) == [.captureScreen, .scrollingCapture, .pinClipboard])
         #expect(ShortcutAction.allCases.filter(\.isGeneral) == [.startMicroBreak, .togglePause, .skipNextBreak])
     }
 }

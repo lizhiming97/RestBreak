@@ -73,7 +73,7 @@ final class MouseCompanionClient: ObservableObject {
 
     var isInstalled: Bool { installedURL() != nil }
 
-    private func installedURL() -> URL? {
+    func installedURL() -> URL? {
         let candidates = [Self.embeddedURL(mainApp: Bundle.main.bundleURL), Self.siblingURL(mainApp: Bundle.main.bundleURL),
                           NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleID)].compactMap { $0 }
         return candidates.first(where: Self.isCompanion)
@@ -88,6 +88,30 @@ final class MouseCompanionClient: ObservableObject {
         isRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID).isEmpty
         status = Self.folder.flatMap { try? Data(contentsOf: $0.appendingPathComponent("status.json")) }
             .flatMap { try? JSONDecoder().decode(MouseStatus.self, from: $0) }
+    }
+
+    static let autoScrollDenied = "com.lizhiming.RestBreak.mouse.autoscroll.denied"
+
+    /// 长截图自动滚动的命令：往全局坐标（左上角原点）point 下面那个窗口发滚动，往下 points 点（负数往上）
+    static func scrollURL(at point: CGPoint, down points: Int) -> URL? {
+        var components = URLComponents()
+        components.scheme = "friday-mouse"
+        components.host = "scroll"
+        components.queryItems = [URLQueryItem(name: "x", value: String(Int(point.x.rounded()))),
+                                 URLQueryItem(name: "y", value: String(Int(point.y.rounded()))),
+                                 URLQueryItem(name: "dy", value: String(points))]
+        return components.url
+    }
+
+    /// 让鼠标组件替我们滚动（星期五在沙盒里不能给别的应用发事件）。组件没装返回 false
+    @discardableResult
+    func autoScroll(at point: CGPoint, down points: Int) -> Bool {
+        guard let app = installedURL(), let url = Self.scrollURL(at: point, down: points) else { return false }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: configuration) { _, _ in }
+        return true
     }
 
     /// launch 拉起组件或让它重新应用设置（也是「重试」）；authorize 让组件弹出系统的辅助功能授权提示。

@@ -6,6 +6,7 @@ enum CaptureAction {
     case copy, save, pin, cancel
     case extractText   // 提取文字（OCR）
     case translate     // 提取文字并翻译
+    case scroll        // 长截图：在选区里滚动拼接
 }
 
 /// 截图框选窗口：无边框、盖住一切（包括菜单栏和全屏 App）
@@ -81,7 +82,8 @@ final class CaptureOverlayController: NSObject {
     }
 
     /// 显示定格画面，开始框选
-    func show(_ snapshots: [ScreenSnapshot], showMagnifier: Bool, annotationStyles: [AnnotationTool: ToolStyle]) {
+    func show(_ snapshots: [ScreenSnapshot], showMagnifier: Bool, annotationStyles: [AnnotationTool: ToolStyle],
+              scrolling: Bool = false) {
         prepare()
         let mouse = NSEvent.mouseLocation
         var keyWindow: CaptureWindow?
@@ -90,6 +92,7 @@ final class CaptureOverlayController: NSObject {
                   let snapshot = snapshots.first(where: { $0.screen.displayID == window.displayID })
             else { continue }
             view.load(snapshot, showMagnifier: showMagnifier, annotationStyles: annotationStyles)
+            view.startsScrollingOnSelect = scrolling
             window.orderFrontRegardless()
             if window.frame.contains(mouse) { keyWindow = window }
         }
@@ -198,6 +201,8 @@ final class CaptureView: NSView {
     private var shiftWasDown = false
     /// 标注（第二期）
     let editor = AnnotationEditor()
+    /// 用长截图快捷键打开：框选松手后直接进入长截图
+    var startsScrollingOnSelect = false
 
     private let accent = NSColor(red: 0.24, green: 0.48, blue: 0.97, alpha: 1)
 
@@ -239,6 +244,7 @@ final class CaptureView: NSView {
             root.addSublayer(sublayer)
         }
         editor.host = self
+        editor.toolbar.showsScrollCapture = true
         editor.toolbar.onAction = { [weak self] action in self?.onAction?(action) }
         let toolbar = NSHostingView(rootView: AnnotationToolbar(model: editor.toolbar))
         toolbar.isHidden = true
@@ -454,6 +460,11 @@ final class CaptureView: NSView {
             if let s = selection, s.width < 2 || s.height < 2 { selection = nil }
             phase = selection == nil ? .hovering : .selected
             hoverTarget = nil
+            // 用长截图快捷键进来的：框好松手就直接开始长截图
+            if startsScrollingOnSelect, selection != nil {
+                onAction?(.scroll)
+                return
+            }
         case .moving, .resizing:
             phase = .selected
         case .hovering, .selected:
@@ -715,7 +726,7 @@ final class CaptureView: NSView {
 
 extension CaptureView: AnnotationHost {
     var annotationSelection: CGRect? { selection }
-    var annotationSnapshot: ScreenSnapshot? { snapshot }
+    var annotationSource: AnnotationSource? { snapshot.map { AnnotationSource(image: $0.image, scale: $0.scale) } }
     func viewRect(_ rect: CGRect) -> NSRect { toView(rect) }
     var hostView: NSView { self }
 

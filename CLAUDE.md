@@ -3,7 +3,8 @@
 > 这份文件只放**当前状态、规则、偏好、坑和文档索引**。各功能的实现细节在 `docs/项目细节.md`（按阶段分节），设计和计划在 `docs/superpowers/`，每次改了什么看 `git log`。改完功能要同步更新对应的地方，这里只留结论。
 
 ## 当前状态（2026-11-03）
-- **当前正式版 0.7.6**（2026-11-05 发布到 GitHub：标签 `v0.7.6`，Release 附 `Friday-0.7.6.dmg`，叠在 0.7.5 之上；用户试用确认没问题）：`发布/星期五-0.7.6.dmg` = 0.7.5 + 修复「点开收起的图标后所有图标跑出来、开关变灰」（换桌面时放开了分隔符并禁用开关）+ 收起图标左键调到前台、右键开菜单 + 修复鼠标顺滑开了反转时 Ctrl/Command 缩放方向反了（11-05 重打包含这些）。
+- **当前正式版 0.7.7**（2026-11-09 发布到 GitHub：标签 `v0.7.7`，Release 附 `Friday-0.7.7.dmg`，叠在 0.7.6 之上）：0.7.6 + 长截图（第二版：参考 Snow Shot 的设计，画面流 + 每帧和上一帧比、累计位置 + 分格投票；自动滚动由鼠标组件直接发给选区中间的窗口，不挪光标；细节见 `docs/项目细节.md`「长截图」）+ 识别结果面板高度封顶 + 长图窗口工具栏独立顶栏。用户试用认可效果。
+- **0.7.6**（2026-11-05 发布，已被 0.7.7 取代：标签 `v0.7.6`，Release 附 `Friday-0.7.6.dmg`，叠在 0.7.5 之上；用户试用确认没问题）：`发布/星期五-0.7.6.dmg` = 0.7.5 + 修复「点开收起的图标后所有图标跑出来、开关变灰」（换桌面时放开了分隔符并禁用开关）+ 收起图标左键调到前台、右键开菜单 + 修复鼠标顺滑开了反转时 Ctrl/Command 缩放方向反了（11-05 重打包含这些）。
 - 收纳的坑：点开收起图标时对方应用常会切桌面，`environmentChanged` 不能放开分隔符；打开统一在主屏副本上移动（外接屏副本临时移动会连续失败）。
 - **0.7.5**（2026-11-04 发布，已被 0.7.6 取代：标签 `v0.7.5`，Release 附 `Friday-0.7.5.dmg`，叠在 0.7.4 之上）：0.7.4 + 修复每天零点闪退（用户反馈「每天早上星期五进程没了」，崩溃报告 `RestBreak-2026-11-04-000006.ips`）。本地 DMG `发布/星期五-0.7.5.dmg`。待用户过一夜确认不再闪退。
 - **坑：系统从后台线程发 `NSCalendarDayChanged` / `NSSystemClockDidChange` / `NSSystemTimeZoneDidChange`**。不能用 `addObserver(self, selector:)` 指向 `@MainActor` 方法（Swift 线程检查直接崩溃），一律用 `MainThreadObserver.observe`（`queue: .main`）。测试 `MidnightNotificationTests`。
@@ -36,7 +37,7 @@
 ## 鼠标组件（2026-11-03 合并进本地 main，随 0.7.4 发布）
 - `MouseCompanion/` 是独立非沙盒 App `星期五鼠标.app`（Bundle ID `com.lizhiming.FridayMouse`），复用 Caldis/Mos 的平滑滚动核心，**许可 CC BY-NC 4.0（非商业）**，不适用主程序 MIT。**上架 App Store 或商业化前必须整个剥离**（Mos 作者也明确不许上 App Store），剥离方法见 `MouseCompanion/UPSTREAM.md`。
 - 用户路径：设置「鼠标」页里直接开「鼠标增强」→ 点「去授权」给「星期五鼠标」辅助功能 → 调方向、手感、排除 App。**所有设置都在星期五这一页，组件不要再有自己的窗口或菜单栏图标**（用户要求）。默认关闭；只处理普通滚轮，触控板/Magic Mouse/连续事件原样放行；检测到 Mos 运行时不接管。
-- 数据流：星期五写 App Group `MouseCompanion/config.json`，组件写回 `status.json`，各发 Darwin 通知 `com.lizhiming.RestBreak.mouse.config|status`；星期五用 `friday-mouse://launch|authorize` 拉起组件。`MouseSettings`（主程序）和 `ScrollConfiguration`（组件）字段名要一起改。组件只在增强开着且星期五运行时留下，打包放 `Contents/Helpers/`，签名带 App Group 权限。
+- 数据流：星期五写 App Group `MouseCompanion/config.json`，组件写回 `status.json`，各发 Darwin 通知 `com.lizhiming.RestBreak.mouse.config|status`；星期五用 `friday-mouse://launch|authorize` 拉起组件。`MouseSettings`（主程序）和 `ScrollConfiguration`（组件）字段名要一起改。组件只在增强开着且星期五运行时留下（例外：长截图自动滚动用 `friday-mouse://scroll` 拉起时，没开增强也留下，60 秒没命令就退出），打包放 `Contents/Helpers/`，签名带 App Group 权限。
 - 规则：方向反转对所有普通滚轮生效，**按住 Ctrl/Command 只跳过平滑、不跳过反转**（用户肌肉记忆是 Ctrl+上滚放大，Mos 也这样；`ScrollEngine.applyDirection`）。不监听 `mouseMoved`、不定时检查（权限变化靠 `com.apple.accessibility.api` 通知）；系统暂停监听时就地恢复，10 秒内最多 3 次。别把这些改回去（理由见 `docs/mouse/2026-11-03-validation.md`）。
 - 构建：先 `python3 scripts/build-menu-bar-experiment.py` 出含收纳的 App，再 `python3 MouseCompanion/scripts/build_app.py --main-app <该 App 绝对路径>` 加入鼠标组件。组件测试：`swift test --build-system native --package-path MouseCompanion`（14 项）。
 - 下一步：用户真机试 0.7.4（验证清单见 validation 文档末尾）；合成事件只填像素位移，Excel/Java 类 App 是否响应待试。

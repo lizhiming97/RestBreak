@@ -3,25 +3,42 @@ import Vision
 
 /// 识别图片里的文字（系统 Vision，离线，不需要下载）
 enum TextRecognizer {
-    /// 识别并按原图位置排版；在后台线程执行，不卡界面
+    /// 识别并按原图位置排版；在后台线程执行，不卡界面。
+    /// 长截图很高：整张交给 Vision 会被缩小到看不清，按每段 3000 像素分段识别再按位置合并
     static func recognize(_ image: CGImage) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-            request.usesLanguageCorrection = true
-            try VNImageRequestHandler(cgImage: image).perform([request])
-
-            let width = CGFloat(image.width), height = CGFloat(image.height)
-            let lines = (request.results ?? []).compactMap { observation -> RecognizedLine? in
-                guard let text = observation.topCandidates(1).first?.string else { return nil }
-                // Vision 的位置是 0～1、左下角原点，换成像素、左上角原点
-                let box = observation.boundingBox
-                return RecognizedLine(text: text, frame: CGRect(x: box.minX * width, y: (1 - box.maxY) * height,
-                                                                width: box.width * width, height: box.height * height))
+            let segment = 3000
+            var lines: [RecognizedLine] = []
+            var top = 0
+            while top < image.height {
+                let height = image.height > 4000 ? min(segment, image.height - top) : image.height
+                let rect = CGRect(x: 0, y: top, width: image.width, height: height)
+                if let part = image.height > 4000 ? image.cropping(to: rect) : image {
+                    lines += try recognizeLines(part).map {
+                        RecognizedLine(text: $0.text, frame: $0.frame.offsetBy(dx: 0, dy: CGFloat(top)))
+                    }
+                }
+                top += height
             }
             return OCRLayout.text(from: lines)
         }.value
+    }
+
+    private static func recognizeLines(_ image: CGImage) throws -> [RecognizedLine] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+        request.usesLanguageCorrection = true
+        try VNImageRequestHandler(cgImage: image).perform([request])
+
+        let width = CGFloat(image.width), height = CGFloat(image.height)
+        return (request.results ?? []).compactMap { observation -> RecognizedLine? in
+            guard let text = observation.topCandidates(1).first?.string else { return nil }
+            // Vision 的位置是 0～1、左下角原点，换成像素、左上角原点
+            let box = observation.boundingBox
+            return RecognizedLine(text: text, frame: CGRect(x: box.minX * width, y: (1 - box.maxY) * height,
+                                                            width: box.width * width, height: box.height * height))
+        }
     }
 }
 

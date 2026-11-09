@@ -126,10 +126,18 @@ final class MouseDelegate: NSObject, NSApplicationDelegate {
     let model = MouseModel()
     private var host: NSRunningApplication?
     private var hostObservation: NSKeyValueObservation?
+    /// 只为长截图自动滚动而启动（没开鼠标增强）时：一段时间没收到滚动命令就退出
+    private var idleQuit: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
             .contains(where: { $0.processIdentifier != getpid() }) else { NSApp.terminate(nil); return }
+        // 星期五用网址拉起（长截图自动滚动）：没开增强也先留下，空闲一会儿再退出
+        let launchedByURL = (notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool) == false
+        if !model.configuration.enabled, launchedByURL, watchHost() {
+            scheduleIdleQuit()
+            return
+        }
         // 只为星期五服务：没开增强、或星期五没在运行（比如直接双击了组件），就不留下。
         guard model.configuration.enabled, watchHost() else {
             SharedStore.write(MouseStatus(state: "off", message: "已关闭 · 使用系统原生滚动"))
@@ -145,6 +153,17 @@ final class MouseDelegate: NSObject, NSApplicationDelegate {
         switch url.host {
         case "authorize": model.authorize()
         case "launch": model.apply()
+        case "scroll":
+            // 长截图自动滚动：往 (x, y)（全局坐标，左上角原点）下面那个窗口往下滚 dy 点（负数往上）
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            func number(_ name: String) -> Double? { query.first { $0.name == name }?.value.flatMap(Double.init) }
+            guard let x = number("x"), let y = number("y"), let dy = number("dy") else { return }
+            if !model.configuration.enabled { scheduleIdleQuit() }
+            if !AutoScroll.post(at: CGPoint(x: x, y: y), down: dy) {
+                // 没有辅助功能权限：告诉星期五改回手动滚动
+                CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                     CFNotificationName(AutoScroll.deniedNotice as CFString), nil, nil, true)
+            }
         default: break
         }
     }
@@ -161,7 +180,100 @@ final class MouseDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    private func scheduleIdleQuit() {
+        idleQuit?.cancel()
+        idleQuit = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled, let self, !self.model.configuration.enabled else { return }
+            NSApp.terminate(nil)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) { model.shutdown() }
+}
+
+/// 长截图的自动滚动：替星期五发滚动事件（星期五在沙盒里不能给别的应用发事件）。
+/// 思路参考 Snow Shot：找到选区中间那个窗口，把滚动事件**直接发给它的进程**并写上窗口内的位置，
+/// 系统就不会去挪光标（只设屏幕位置再发，系统会把光标拽过去，2026-11-09 实测）。
+/// 发的是触控板那种连续的像素滚动：负数往下（实测），不受自然滚动和鼠标增强反转影响，应用也不再叠加动画。
+@MainActor
+enum AutoScroll {
+    static let deniedNotice = "com.lizhiming.RestBreak.mouse.autoscroll.denied"
+    /// 一次命令拆成 4 小段、每 50 毫秒一段：星期五每 0.2 秒发一次命令，连起来是匀速往下走
+    static let pieces = 4
+
+    private typealias SetWindowLocation = @convention(c) (CGEvent, CGPoint) -> Void
+    /// CoreGraphics 导出了、但公开 SDK 里没有声明的函数：给发往进程的事件写上窗口内位置。找不到就不发（绝不挪光标）
+    private static let setWindowLocation: SetWindowLocation? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGEventSetWindowLocation") else { return nil }
+        return unsafeBitCast(symbol, to: SetWindowLocation.self)
+    }()
+
+    private struct Target {
+        let pid: pid_t
+        let windowNumber: Int
+        let bounds: CGRect   // 全局坐标，左上角原点
+    }
+
+    /// point 下面最上层的普通窗口（跳过星期五和本组件自己的窗口，比如长截图的描边和面板）
+    private static func target(at point: CGPoint) -> Target? {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return nil }
+        let skipped = Set(NSRunningApplication.runningApplications(withBundleIdentifier: "com.lizhiming.RestBreak")
+            .map(\.processIdentifier) + [getpid()])
+        for info in list {
+            guard (info[kCGWindowLayer as String] as? Int) == 0,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t, !skipped.contains(pid),
+                  let number = info[kCGWindowNumber as String] as? Int,
+                  let dict = info[kCGWindowBounds as String] as! CFDictionary?,
+                  let bounds = CGRect(dictionaryRepresentation: dict), bounds.contains(point),
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
+            return Target(pid: pid, windowNumber: number, bounds: bounds)
+        }
+        return nil
+    }
+
+    /// 返回 false 表示没权限或找不到窗口（星期五改回手动滚动）
+    static func post(at point: CGPoint, down distance: Double) -> Bool {
+        guard AXIsProcessTrusted(), let setWindowLocation, let target = target(at: point) else { return false }
+        let total = Int(distance.rounded())
+        guard total != 0 else { return true }
+        Task { @MainActor in
+            var sent = 0
+            for index in 1...pieces {
+                let goal = total * index / pieces
+                let delta = goal - sent
+                sent = goal
+                if delta != 0 { send(delta, to: target, at: point, setWindowLocation: setWindowLocation) }
+                if index < pieces { try? await Task.sleep(for: .milliseconds(50)) }
+            }
+        }
+        return true
+    }
+
+    private static func send(_ delta: Int, to target: Target, at point: CGPoint, setWindowLocation: SetWindowLocation) {
+        // 借一个带目标窗口编号的「鼠标移动」事件当载体，改成滚动事件（这样事件里的窗口字段都是对的）
+        guard let carrier = NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [], timestamp: 0,
+                                               windowNumber: target.windowNumber, context: nil, eventNumber: 0,
+                                               clickCount: 0, pressure: 0)?.cgEvent?.copy(),
+              let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                  wheel1: Int32(-delta), wheel2: 0, wheel3: 0) else { return }
+        wheel.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        carrier.type = .scrollWheel
+        for field: CGEventField in [.scrollWheelEventDeltaAxis1, .scrollWheelEventDeltaAxis2,
+                                    .scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2,
+                                    .scrollWheelEventIsContinuous] {
+            carrier.setIntegerValueField(field, value: wheel.getIntegerValueField(field))
+        }
+        for field: CGEventField in [.scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis2] {
+            carrier.setDoubleValueField(field, value: wheel.getDoubleValueField(field))
+        }
+        // 带上组件标记，鼠标增强不会再处理一遍
+        carrier.setIntegerValueField(.eventSourceUserData, value: ScrollEventAdapter.marker)
+        carrier.location = point
+        setWindowLocation(carrier, CGPoint(x: point.x - target.bounds.minX, y: point.y - target.bounds.minY))
+        carrier.postToPid(target.pid)
+    }
 }
 
 @main

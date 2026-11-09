@@ -1,11 +1,18 @@
 import AppKit
 
-/// 截图标注的宿主（框选界面）需要提供的东西
+/// 标注底图和像素密度（像素 / 点）
+struct AnnotationSource {
+    let image: CGImage
+    let scale: CGFloat
+}
+
+/// 截图标注的宿主（框选界面、长图窗口）需要提供的东西
 @MainActor
 protocol AnnotationHost: AnyObject {
     /// 当前选区（屏幕内左上角坐标）
     var annotationSelection: CGRect? { get }
-    var annotationSnapshot: ScreenSnapshot? { get }
+    /// 标注底图和像素密度（像素 / 点）。截图框选时是整块屏幕，长图窗口里是整张长图
+    var annotationSource: AnnotationSource? { get }
     /// 屏幕内左上角坐标 → 视图坐标
     func viewRect(_ rect: CGRect) -> NSRect
     var hostView: NSView { get }
@@ -383,7 +390,7 @@ final class AnnotationEditor: NSObject, NSTextFieldDelegate {
 
     /// 选区或标注变了：重画标注图层、更新虚线框
     func redraw() {
-        guard let host, let selection = host.annotationSelection, host.annotationSnapshot != nil,
+        guard let host, let selection = host.annotationSelection, host.annotationSource != nil,
               !(document.isEmpty && draft == nil && editingText == nil)
         else {
             annotationLayer.isHidden = true
@@ -425,7 +432,7 @@ final class AnnotationEditor: NSObject, NSTextFieldDelegate {
     /// 导出选区 + 标注（先结束文字输入）
     func export() -> CGImage? {
         endTextEditing(commit: true)
-        guard let host, let selection = host.annotationSelection, let snapshot = host.annotationSnapshot else { return nil }
+        guard let host, let selection = host.annotationSelection, let snapshot = host.annotationSource else { return nil }
         return AnnotationRenderer.export(selection: selection, source: snapshot.image, scale: snapshot.scale,
                                          annotations: document.items, cache: cache)
     }
@@ -455,7 +462,7 @@ extension AnnotationEditor: CALayerDelegate {
         // 图层总是在主线程上绘制；context 只在这次调用里用
         nonisolated(unsafe) let context = ctx
         MainActor.assumeIsolated {
-            guard let host, let selection = host.annotationSelection, let snapshot = host.annotationSnapshot else { return }
+            guard let host, let selection = host.annotationSelection, let snapshot = host.annotationSource else { return }
             AnnotationRenderer.drawComposite(in: context, selection: selection, source: snapshot.image,
                                              scale: snapshot.scale, annotations: visibleAnnotations, cache: cache)
         }

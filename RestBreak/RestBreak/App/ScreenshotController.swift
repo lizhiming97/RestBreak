@@ -21,6 +21,12 @@ final class ScreenshotController {
     /// 框选界面已经显示（菜单开着时截图：截到菜单后再把菜单收起来）
     var onOverlayShown: (() -> Void)?
 
+    /// 正在进行的长截图，以及打开着的长图窗口
+    private var scrollSession: ScrollingCaptureSession?
+    private var longWindows: [LongImageWindow] = []
+    /// 这次截图用的标注样式（长图窗口也用）
+    private var annotationStyles: [AnnotationTool: ToolStyle] = [:]
+
     /// 标注时改了某个工具的颜色/粗细（写回设置）
     var onAnnotationStyleChange: ((AnnotationTool, ToolStyle) -> Void)?
 
@@ -36,8 +42,9 @@ final class ScreenshotController {
 
     // MARK: - 截图
 
-    func startCapture(settings: AppSettings) {
-        guard !isCapturing else { return }
+    /// scrolling：用长截图快捷键打开，框好就直接开始长截图
+    func startCapture(settings: AppSettings, scrolling: Bool = false) {
+        guard !isCapturing, scrollSession == nil else { return }
         guard ScreenCapturer.hasPermission else {
             // 每次都向系统申请一次：系统设置里没有这个 App（或者签名变了、旧授权对不上）时会重新登记；
             // 已经拒绝过的不会再弹系统窗口，就弹我们自己的说明
@@ -54,6 +61,7 @@ final class ScreenshotController {
         isCapturing = true
         let showMagnifier = settings.showMagnifier
         let annotationStyles = settings.annotationStyles
+        self.annotationStyles = annotationStyles
         Task {
             do {
                 // 窗口平时不预建（省内存），截图时先建好再截屏（建窗口只要几毫秒）
@@ -62,7 +70,7 @@ final class ScreenshotController {
                 // 截屏的这一点时间里可能已经被取消了（比如休息开始）
                 guard isCapturing else { return }
                 guard !snapshots.isEmpty else { throw CocoaError(.featureUnsupported) }
-                overlay.show(snapshots, showMagnifier: showMagnifier, annotationStyles: annotationStyles)
+                overlay.show(snapshots, showMagnifier: showMagnifier, annotationStyles: annotationStyles, scrolling: scrolling)
                 onOverlayShown?()
                 onOverlayShown = nil
             } catch {
@@ -76,6 +84,7 @@ final class ScreenshotController {
 
     /// 取消正在进行的截图（休息开始、显示器变化时）
     func cancel() {
+        scrollSession?.cancel()
         guard isCapturing else { return }
         // 先结束截图再关保存框，保存框的「取消」回调就不会把选区又显示出来
         let panel = savePanel
@@ -85,6 +94,13 @@ final class ScreenshotController {
 
     private func handle(_ action: CaptureAction, from view: CaptureView) {
         guard action != .cancel else { finish(); return }
+        if action == .scroll {
+            guard let rect = view.selectionInScreen, let screen = view.window?.screen ?? NSScreen.main else { return }
+            // 撤掉定格画面、把焦点还给原来的 App（要在它里面滚动），再开始长截图
+            finish()
+            startScrolling(rect, on: screen)
+            return
+        }
         guard let image = view.selectedImage(), let rect = view.selectionInScreen else { return }
         switch action {
         case .copy:
@@ -111,7 +127,66 @@ final class ScreenshotController {
             let pinFrame = screen.map { PinFrame.fitted(rect, on: $0) } ?? rect
             pin(image, frame: pinFrame)
             showText(of: image, near: pinFrame, translate: action == .translate)
-        case .cancel:
+        case .cancel, .scroll:
+            break
+        }
+    }
+
+    // MARK: - 长截图
+
+    private func startScrolling(_ rect: NSRect, on screen: NSScreen) {
+        let session = ScrollingCaptureSession(rect: rect, screen: screen)
+        session.onEnd = { [weak self] image, scale in
+            guard let self else { return }
+            self.scrollSession = nil
+            if let image { self.showLongImage(image, scale: scale, on: screen) }
+        }
+        scrollSession = session
+        session.start()
+    }
+
+    private func showLongImage(_ image: CGImage, scale: CGFloat, on screen: NSScreen) {
+        let window = LongImageWindow(image: image, scale: scale, on: screen, annotationStyles: annotationStyles)
+        window.subtitle = "拼接偶尔会漏行，分享前看一下开头、中间和结尾"
+        window.canvas.editor.onStyleChange = { [weak self] tool, style in
+            self?.onAnnotationStyleChange?(tool, style)
+            self?.annotationStyles[tool] = style
+        }
+        window.onAction = { [weak self] action, window in self?.handleLong(action, from: window) }
+        longWindows.append(window)
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(window.canvas)
+    }
+
+    private func closeLong(_ window: LongImageWindow) {
+        window.orderOut(nil)
+        window.close()
+        longWindows.removeAll { $0 === window }
+    }
+
+    private func handleLong(_ action: CaptureAction, from window: LongImageWindow) {
+        guard action != .cancel else { closeLong(window); return }
+        guard let image = window.exportImage() else { NSSound.beep(); return }
+        let size = window.imagePointSize
+        let center = NSPoint(x: window.frame.midX, y: window.frame.midY)
+        let screen = window.screen ?? NSScreen.main
+        switch action {
+        case .copy:
+            ImageExport.copy(image, pointSize: size)
+            closeLong(window)
+            Toast.show("已复制", at: center)
+        case .save:
+            _ = ImageExport.save(image, pointSize: size) { [weak self, weak window] result in
+                if result == .saved, let window { self?.closeLong(window) }
+            }
+        case .pin:
+            closeLong(window)
+            let frame = NSRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height)
+            pin(image, frame: screen.map { PinFrame.fitted(frame, on: $0) } ?? frame)
+        case .extractText, .translate:
+            showText(of: image, near: window.frame, translate: action == .translate)
+        case .cancel, .scroll:
             break
         }
     }

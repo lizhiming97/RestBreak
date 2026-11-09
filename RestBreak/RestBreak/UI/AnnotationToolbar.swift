@@ -12,6 +12,8 @@ final class AnnotationToolbarModel: ObservableObject {
     @Published var style = ToolStyle.default
     @Published var canUndo = false
     @Published var canRedo = false
+    /// 是否显示「长截图」按钮（截图框选时显示，长图窗口里不显示）
+    @Published var showsScrollCapture = false
 
     var onSelectTool: (AnnotationTool?) -> Void = { _ in }
     var onChangeStyle: (ToolStyle) -> Void = { _ in }
@@ -56,6 +58,9 @@ struct AnnotationToolbar: View {
             ToolbarIconButton(symbol: "text.viewfinder", help: "提取文字") { model.onAction(.extractText) }
             ToolbarIconButton(symbol: "translate", help: "翻译") { model.onAction(.translate) }
             ToolbarSeparator()
+            if model.showsScrollCapture {
+                ToolbarIconButton(symbol: "rectangle.expand.vertical", help: "长截图（框好后滚动页面）") { model.onAction(.scroll) }
+            }
             ToolbarIconButton(symbol: "pin", help: "贴到桌面 (Space)") { model.onAction(.pin) }
             ToolbarIconButton(symbol: "square.and.arrow.down", help: "保存 (⌘S)") { model.onAction(.save) }
             ToolbarIconButton(symbol: "xmark", help: "取消 (Esc)") { model.onAction(.cancel) }

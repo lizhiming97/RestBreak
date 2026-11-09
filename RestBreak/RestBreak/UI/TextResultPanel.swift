@@ -185,7 +185,7 @@ struct TextResultView: View {
                 .foregroundStyle(PanelColors.text)
                 .scrollContentBackground(.hidden)
                 .lineSpacing(3)
-                .frame(minHeight: 70, idealHeight: idealHeight(for: model.text), maxHeight: 240)
+                .frame(minHeight: 70, idealHeight: idealHeight(for: model.text, max: 320), maxHeight: 320)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -223,7 +223,7 @@ struct TextResultView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(minHeight: 20, idealHeight: idealHeight(for: result) - 10, maxHeight: 200)
+                .frame(minHeight: 20, idealHeight: idealHeight(for: result, max: 240) - 10, maxHeight: 240)
                 .fixedSize(horizontal: false, vertical: true)
             case .failed(let error):
                 HStack(spacing: 8) {
@@ -278,12 +278,14 @@ struct TextResultView: View {
         .frame(maxWidth: .infinity, minHeight: 70)
     }
 
-    /// 按行数估计合适的高度（再由 min / max 限制）
-    private func idealHeight(for text: String) -> CGFloat {
+    /// 按行数估计合适的高度，不超过 max。
+    /// 下面用了 fixedSize 让框按这个高度显示，它会越过 maxHeight——所以这里必须自己封顶，
+    /// 否则长截图提取出几百行文字时，面板会比屏幕还高、下面显示不全（2026-11-09 用户反馈）。超出的在框里滚动
+    private func idealHeight(for text: String, max limit: CGFloat) -> CGFloat {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).reduce(0) { total, line in
             total + max(1, Int(ceil(Double(line.count) / 30)))   // 每行大约 30 个汉字宽
         }
-        return CGFloat(lines) * 20 + 16
+        return min(CGFloat(lines) * 20 + 16, limit)
     }
 
     private func copy(_ text: String) {

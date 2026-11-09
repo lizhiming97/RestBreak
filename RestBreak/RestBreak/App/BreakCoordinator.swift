@@ -341,11 +341,11 @@ final class BreakCoordinator: ObservableObject {
                 onUpdate?()
                 kickTick()
             }
-        case .captureScreen:
+        case .captureScreen, .scrollingCapture:
             // 休息中（含预览休息画面）不截图
             if case .onBreak = scheduler.state { return }
             if isPreviewing { return }
-            screenshots.startCapture(settings: settings)
+            screenshots.startCapture(settings: settings, scrolling: action == .scrollingCapture)
         case .pinClipboard:
             screenshots.pinClipboard(settings: settings)
         case .clipboardHistory:
