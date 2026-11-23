@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import AppKit
+import os
 import SwiftUI
 import MenuBarShelf
 
@@ -41,6 +42,8 @@ final class LabDelegate: NSObject, NSApplicationDelegate {
             return
         }
         controller.pinnedBundleIDs = [Self.fridayBundleID]
+        // macOS 27：上次异常退出留下的收起先放回，启用时再按选择收起。
+        controller.releaseLeftoverNativeHides()
         UserDefaults.standard.register(defaults: ["NSStatusItem Preferred Position MenuBarShelfLab.Launcher": 0])
         updateLauncher()
         watchFriday()
@@ -59,6 +62,7 @@ final class LabDelegate: NSObject, NSApplicationDelegate {
         updateLauncher()
         switch url.host {
         case "launch":
+            os_log("launch: autoEnable=%{public}d", UserDefaults.standard.bool(forKey: Self.autoEnableKey) ? 1 : 0)
             // 星期五启动时在后台拉起：之前启用过就自动启用，否则安静退出，不占菜单栏。
             if UserDefaults.standard.bool(forKey: Self.autoEnableKey) { enable() }
             if !controller.isEnabled && window?.isVisible != true { quitAfterCleanup() }
@@ -212,9 +216,15 @@ struct LabSettings: View {
                         ShelfPermissions.openSettings(screenRecording: false)
                     }
                     Divider()
-                    permissionRow("屏幕录制", detail: "读取菜单栏图标的图像", allowed: recording) {
-                        ShelfPermissions.requestScreenRecording()
-                        ShelfPermissions.openSettings(screenRecording: true)
+                    if ShelfPermissions.usesSystemSwitches {
+                        permissionRow("完全磁盘访问权限", detail: "macOS 27：在系统设置里给「星期五」打开，用来改「允许在菜单栏显示」开关", allowed: recording) {
+                            ShelfPermissions.openFullDiskAccessSettings()
+                        }
+                    } else {
+                        permissionRow("屏幕录制", detail: "读取菜单栏图标的图像", allowed: recording) {
+                            ShelfPermissions.requestScreenRecording()
+                            ShelfPermissions.openSettings(screenRecording: true)
+                        }
                     }
                 }.padding(8)
             }
@@ -289,7 +299,7 @@ struct LabSettings: View {
     }
     private func refreshPermissions() {
         accessibility = ShelfPermissions.accessibility
-        recording = ShelfPermissions.screenRecording
+        recording = ShelfPermissions.secondPermission
     }
 }
 

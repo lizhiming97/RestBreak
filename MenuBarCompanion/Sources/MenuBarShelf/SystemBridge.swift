@@ -191,6 +191,14 @@ public enum ShelfPermissions {
             SCShareableContent.getWithCompletionHandler { _, _ in }
         } else { _ = CGRequestScreenCaptureAccess() }
     }
+    /// macOS 27 不再需要屏幕录制，改为需要完全磁盘访问权限（读写系统的「允许在菜单栏显示」开关）。
+    public static var usesSystemSwitches: Bool { Native27.isActive }
+    public static var fullDiskAccess: Bool { Native27.Switches.isReadable }
+    /// 第二项权限：macOS 27 是完全磁盘访问，之前是屏幕录制。
+    public static var secondPermission: Bool { usesSystemSwitches ? fullDiskAccess : screenRecording }
+    public static func openFullDiskAccessSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(url) }
+    }
     public static func openSettings(screenRecording: Bool) {
         let suffix = screenRecording ? "Privacy_ScreenCapture" : "Privacy_Accessibility"
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(suffix)") { NSWorkspace.shared.open(url) }

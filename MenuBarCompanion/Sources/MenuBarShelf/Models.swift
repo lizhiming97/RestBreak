@@ -10,7 +10,7 @@ extension CGError { var logString: String { "CGError(\(rawValue))" } }
 
 public enum ShelfError: LocalizedError {
     case permission, screenRecording, inputBusy, missingItem, noSpace, dividerMissing, spaceChanged, displayRemoved, captureFailed
-    case automaticMenuBar, pendingRestore, movementFailed
+    case automaticMenuBar, pendingRestore, movementFailed, fullDiskAccess
     public var errorDescription: String? {
         switch self {
         case .permission: "请先在系统设置中允许「星期五菜单栏」使用辅助功能。"
@@ -25,6 +25,7 @@ public enum ShelfError: LocalizedError {
         case .automaticMenuBar: "请先关闭系统的“自动隐藏菜单栏”，再使用下方展开栏。"
         case .pendingRestore: "上一个应用菜单仍打开，或图标尚未归位。请先关闭菜单并恢复图标。"
         case .movementFailed: "未能确认图标移动成功，请刷新后重试。"
+        case .fullDiskAccess: "macOS 27 需要「完全磁盘访问权限」才能收起图标：系统设置 › 隐私与安全性 › 完全磁盘访问权限，添加并打开「星期五」（组件装在星期五里面，系统按星期五算权限），再点「启用收纳」。"
         }
     }
 }

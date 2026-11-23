@@ -47,6 +47,22 @@ public final class ShelfController: NSObject, ObservableObject {
     /// 每块屏的每份图标窗口及其来源应用；AX 只报告其中一份，刷新时按顺序补到其他屏的副本。
     private var attribution: [CGWindowID: MenuBarItem] = [:]
 
+    // macOS 27：改系统的「允许在菜单栏显示」开关（见 Native27.swift），不用分隔符。
+    private var native: Bool { Native27.isActive }
+    /// 用户选择收起的应用（bundle ID）。关闭收纳或退出时图标放回来，下次启动重新收起。
+    private let nativeHiddenKey = "MenuBarShelf.Native27Hidden"
+    /// 本组件亲手关掉的应用：只放回这些，用户自己在系统设置里关的不碰。崩溃后下次启动也会先放回。
+    private let nativeDisallowedKey = "MenuBarShelf.Native27Disallowed"
+    /// 列表里每行对应的应用和图标。
+    private var nativeIcons: [CGWindowID: Native27.Icon] = [:]
+    /// 从星期五菜单点开收起图标时临时放出来的应用；它的菜单关掉后再收回。
+    private var nativeTemporary: String?
+    private var nativeReturnTask: Task<Void, Never>?
+    /// 见过的应用图标（bundle ID → 名字和进程）。被系统折叠到 « 后面时读不到，仍留在列表里，应用退出才删。
+    private var nativeSeen: [String: (name: String, pid: pid_t)] = [:]
+    /// 本组件展开了折叠区，用完要收回。
+    private var nativeExpandedOverflow = false
+
     private struct ReturnContext {
         let item: MenuBarItem
         let rightNeighbor: MenuBarItem
@@ -68,6 +84,7 @@ public final class ShelfController: NSObject, ObservableObject {
         guard ShelfPermissions.accessibility else {
             message = ShelfError.permission.localizedDescription; publishSnapshot(status: "permission"); return
         }
+        if native { nativeStart(); return }
         guard ShelfPermissions.screenRecording else {
             message = ShelfError.screenRecording.localizedDescription; publishSnapshot(status: "permission"); return
         }
@@ -154,6 +171,7 @@ public final class ShelfController: NSObject, ObservableObject {
     }
 
     public func refresh() {
+        if native { nativeRefresh(); return }
         guard isEnabled, !isBusy, let listDisplayID else { return }
         let all = Bridging.menuBarItems()
         let chains = NSScreen.screens.map(Self.displayID(of:)).compactMap { id in layout(on: id, items: all).map { (id, $0) } }
@@ -221,6 +239,7 @@ public final class ShelfController: NSObject, ObservableObject {
     private var copies: [CGWindowID: [CGWindowID]] = [:]
 
     private func captureImage(_ id: CGWindowID) -> CGImage? {
+        if native { return nativeIcons[id].flatMap { Native27.appIcon(bundleID: $0.bundleID) } }
         for candidate in [id] + (copies[id] ?? []) {
             guard let item = Bridging.item(candidate), let image = Bridging.image(of: item).flatMap(SnapshotStore.trimmed) else { continue }
             return image
@@ -264,6 +283,7 @@ public final class ShelfController: NSObject, ObservableObject {
         if command == "refresh" { refresh(); return }
         if command == "diagnose" { writeDiagnostics(); return }
         if command == "restore" { restoreTemporaryItem(); return }
+        if native { nativeHandle(command: command, key: key, button: button); return }
         if command == "reveal-all" {
             for item in items.filter({ hiddenIDs.contains($0.id) && !isPinned($0) }).reversed() {
                 setHidden(item.id, hidden: false, on: listDisplayID)
@@ -307,6 +327,7 @@ public final class ShelfController: NSObject, ObservableObject {
     /// `displayID` 为图标副本所在的屏幕；顺序全局一致，所有屏一起生效。
     public func setHidden(_ id: CGWindowID, hidden: Bool, on displayID: CGDirectDisplayID? = nil) {
         guard isEnabled, !isStopping else { return }
+        if native { nativeSetHidden(id, hidden: hidden); return }
         // 有临时图标没归位时不再拒绝：执行前先把它放回去（见 drainToggles）
         guard !movingIDs.contains(id) else { return }
         toggleQueue.append((id, stableKey(for: id), hidden, displayID))
@@ -316,6 +337,12 @@ public final class ShelfController: NSObject, ObservableObject {
 
     /// 「全部显示」：从最右边的收纳项开始依次移到分隔符右侧，保持原来的左右顺序。
     public func revealAll() {
+        if native {
+            nativeDesired = []
+            nativeApply()
+            refresh()
+            return
+        }
         for row in panelRows.filter({ $0.isHidden && !$0.isPinned }).reversed() {
             setHidden(row.id, hidden: false, on: panelDisplayID)
         }
@@ -589,6 +616,7 @@ public final class ShelfController: NSObject, ObservableObject {
     }
 
     private func finishStopping() async {
+        if native { nativeStop(); return }
         returnTask?.cancel()
         toggleQueue.removeAll()
         movingIDs.removeAll()
@@ -662,5 +690,270 @@ public final class ShelfController: NSObject, ObservableObject {
         let bounds = CGDisplayBounds(displayID)
         guard let divider = DisplayChain.ownCopy(.divider, on: bounds, in: all, bundleID: Self.ownBundleID) else { return nil }
         return DisplayChain.chain(anchoredAt: divider, in: all, display: bounds)
+    }
+
+    // MARK: - macOS 27
+
+    private var nativeDesired: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: nativeHiddenKey) ?? []) }
+        set { UserDefaults.standard.set(newValue.sorted(), forKey: nativeHiddenKey) }
+    }
+
+    private var nativeRecorded: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: nativeDisallowedKey) ?? []) }
+        set { UserDefaults.standard.set(newValue.sorted(), forKey: nativeDisallowedKey) }
+    }
+
+    private static let log27 = Logger(category: "Native27")
+
+    private func nativeStart() {
+        Self.log27.notice("启用：能读系统开关=\(Native27.Switches.isReadable, privacy: .public)")
+        guard Native27.Switches.isReadable else {
+            message = ShelfError.fullDiskAccess.localizedDescription
+            publishSnapshot(status: "permission")
+            return
+        }
+        isStopping = false
+        isEnabled = true
+        isCollapsed = true
+        layoutRestored = true
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(applicationsChanged), name: name, object: nil)
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(applicationActive),
+                                               name: NSApplication.didBecomeActiveNotification, object: nil)
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque(),
+                                        { _, observer, _, _, _ in
+                                            guard let observer else { return }
+                                            let controller = Unmanaged<ShelfController>.fromOpaque(observer).takeUnretainedValue()
+                                            Task { @MainActor in controller.refresh() }
+                                        }, SnapshotStore.requestNotice as CFString, nil, .deliverImmediately)
+        message = "已启用。点星期五菜单里的「菜单栏图标」选择收起哪些图标。"
+        nativeApply()
+        refresh()
+        nativePeekOverflow()
+    }
+
+    /// 启动时看一眼折叠区：展开 « → 读出折叠着的图标（记进 nativeSeen）→ 收回。菜单栏会闪一下（用户同意）。
+    private func nativePeekOverflow() {
+        guard let overflow = Native27.overflow(), !overflow.isExpanded else { return }
+        Task { [weak self] in
+            guard Native27.setOverflow(expanded: true) else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+            self?.refresh()
+            Native27.setOverflow(expanded: false)
+            Self.log27.notice("看了一眼折叠区：读到 \(self?.nativeSeen.count ?? 0, privacy: .public) 个图标")
+        }
+    }
+
+    /// 让系统开关和用户的选择一致：该收的关掉，本组件以前关掉、现在不该收的打开。返回是否写成功。
+    @discardableResult
+    private func nativeApply(releaseAll: Bool = false) -> Bool {
+        guard let array = Native27.Switches.read() else { return false }
+        let states = Native27.Switches.states(in: array)
+        var wanted = releaseAll ? [] : nativeDesired.subtracting(pinnedBundleIDs).subtracting([Self.ownBundleID])
+        if let nativeTemporary { wanted.remove(nativeTemporary) }
+        let recorded = nativeRecorded
+        let toHide = Set(wanted.filter { states[$0] == true })
+        let toShow = recorded.subtracting(wanted)
+        // 先记下再写：万一写到一半退出，下次启动能把它们放回来。
+        nativeRecorded = recorded.union(toHide)
+        let hidden = Native27.Switches.setting(false, for: toHide, in: array)
+        let shown = Native27.Switches.setting(true, for: toShow, in: hidden.array)
+        if !hidden.changed.isEmpty || !shown.changed.isEmpty {
+            Self.log27.notice("改开关：收起 \(hidden.changed.count, privacy: .public) 个、放出 \(shown.changed.count, privacy: .public) 个")
+        }
+        if !hidden.changed.isEmpty || !shown.changed.isEmpty {
+            guard Native27.Switches.write(shown.array) else { message = "没能修改系统的菜单栏开关，请稍后重试。"; return false }
+        }
+        let final = Native27.Switches.states(in: shown.array)
+        nativeRecorded = nativeRecorded.intersection(wanted).filter { final[$0] == false }
+        return true
+    }
+
+    private func nativeRefresh() {
+        guard isEnabled, !isStopping else { return }
+        guard let array = Native27.Switches.read() else {
+            message = ShelfError.fullDiskAccess.localizedDescription
+            return
+        }
+        let states = Native27.Switches.states(in: array)
+        // 新启动的应用：系统建好它的开关后才能收起，刷新时补一次。
+        if nativeDesired.contains(where: { states[$0] == true && $0 != nativeTemporary }) { nativeApply() }
+        let latest = Native27.Switches.read().map(Native27.Switches.states(in:)) ?? states
+        var seen = Set<String>()
+        var rows: [MenuBarItem] = []
+        var icons: [CGWindowID: Native27.Icon] = [:]
+        // 一个应用一个开关，所以一个应用一行（取最左边那个图标）。
+        func row(bundleID: String, name: String, pid: pid_t, frame: CGRect) -> MenuBarItem {
+            let id = Native27.stableID(for: bundleID, index: 0)
+            var item = MenuBarItem(windowID: id, ownerPID: pid, title: bundleID, ownerName: name,
+                                   bundleID: bundleID, frame: frame, isOnScreen: true)
+            item.accessibilityName = name
+            item.sourceProcessID = pid
+            item.sourceBundleID = bundleID
+            return item
+        }
+        for icon in Native27.icons() where icon.bundleID != Self.ownBundleID {
+            // 开关记在图标自己名下，还是记在外层应用名下（如 WPS）。都没有就列不出来（输入法、后台服务等）。
+            let owner: (id: String, name: String)
+            if latest[icon.bundleID] != nil { owner = (icon.bundleID, icon.name) }
+            else if let enclosing = icon.enclosing, latest[enclosing.id] != nil { owner = enclosing }
+            else { continue }
+            guard seen.insert(owner.id).inserted else { continue }
+            let item = row(bundleID: owner.id, name: owner.name, pid: icon.pid, frame: icon.frame)
+            rows.append(item)
+            icons[item.id] = icon
+            nativeSeen[owner.id] = (owner.name, icon.pid)
+        }
+        // 见过、现在读不到的：被折叠到 « 后面，或者被收起了。应用还在运行就留着，排在后面。
+        // 用户选了收起的应用一定要在列表里（收起后系统不再报告它的图标，重启组件后也没「见过」），否则开关关不回来。
+        let runningApps = NSWorkspace.shared.runningApplications
+        for bundleID in nativeDesired where nativeSeen[bundleID] == nil {
+            if let app = runningApps.first(where: { $0.bundleIdentifier == bundleID }) {
+                nativeSeen[bundleID] = (app.localizedName ?? bundleID, app.processIdentifier)
+            }
+        }
+        let running = Set(runningApps.map(\.processIdentifier))
+        nativeSeen = nativeSeen.filter { running.contains($0.value.pid) }
+        for (bundleID, info) in nativeSeen.sorted(by: { $0.value.name < $1.value.name })
+            where !seen.contains(bundleID) && latest[bundleID] != nil {
+            seen.insert(bundleID)
+            rows.append(row(bundleID: bundleID, name: info.name, pid: info.pid, frame: .zero))
+        }
+        nativeIcons = icons
+        attribution = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        items = rows
+        hiddenIDs = Set(rows.filter { latest[$0.bundleID] == false && $0.bundleID != nativeTemporary }.map(\.id))
+        publishSnapshot()
+    }
+
+    private func nativeSetHidden(_ id: CGWindowID, hidden: Bool) {
+        guard let item = items.first(where: { $0.id == id }), !isPinned(item) else { return }
+        var desired = nativeDesired
+        if hidden { desired.insert(item.bundleID) } else { desired.remove(item.bundleID) }
+        nativeDesired = desired
+        if nativeTemporary == item.bundleID { nativeTemporary = nil; nativeReturnTask?.cancel() }
+        nativeApply()
+        message = hidden ? "已收起 \(item.displayName)。" : "已显示 \(item.displayName)。"
+        refresh()
+    }
+
+    private func nativeHandle(command: String, key: String?, button: CGMouseButton) {
+        switch command {
+        case "refresh": refresh()
+        case "diagnose": writeDiagnostics()
+        case "restore": nativeFinishTemporary()
+        case "reveal-all": revealAll()
+        default:
+            guard let key, let index = ShelfGeometry.layoutKeys(items).firstIndex(of: key) else {
+                message = ShelfError.missingItem.localizedDescription; return
+            }
+            let item = items[index]
+            switch command {
+            case "hide": nativeSetHidden(item.id, hidden: true)
+            case "show": nativeSetHidden(item.id, hidden: false)
+            case "open": nativeOpen(item, right: button == .right)
+            default: break
+            }
+        }
+    }
+
+    /// 点开图标。收起的先临时放出来（系统画好要一点时间），点开它的菜单，菜单关掉后再收回。
+    private func nativeOpen(_ item: MenuBarItem, right: Bool) {
+        let bundleID = item.bundleID
+        let wasHidden = hiddenIDs.contains(item.id)
+        nativeReturnTask?.cancel()
+        nativeReturnTask = Task { [weak self] in
+            guard let self else { return }
+            if wasHidden {
+                self.nativeTemporary = bundleID
+                self.nativeApply()
+            }
+            // 等系统把图标画到菜单栏上（放出来约 0.25 秒），最多 2 秒；
+            // 0.6 秒还没画出来，多半被折叠到 « 后面了：展开折叠区再找，菜单关掉后收回。
+            var icon: Native27.Icon?
+            func find() -> Native27.Icon? {
+                Native27.icons().first { $0.bundleID == bundleID || $0.enclosing?.id == bundleID }
+            }
+            for attempt in 0..<20 {
+                icon = find()
+                if let frame = icon?.frame, Native27.isDrawn(frame) { break }
+                if attempt == 6, Native27.setOverflow(expanded: true) { self.nativeExpandedOverflow = true }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            if icon == nil { icon = self.nativeIcons[item.id] }
+            // 刚画出来时位置还会微调，稍等再取一次。
+            try? await Task.sleep(for: .milliseconds(150))
+            icon = find() ?? icon
+            // 面板可能由同一个应用包里的别的进程画（WPS 的云盘面板就不是图标那个进程画的），
+            // 所以把这个应用包下所有进程的窗口都算上，否则会以为没打开、提前把图标收回去。
+            func panelWindows() -> Set<CGWindowID> {
+                var pids: Set<pid_t> = [item.ownerPID]
+                for app in NSWorkspace.shared.runningApplications
+                where app.bundleIdentifier == bundleID
+                    || app.bundleURL.flatMap({ Native27.enclosingApp(ofBundlePath: $0.path)?.id }) == bundleID {
+                    pids.insert(app.processIdentifier)
+                }
+                return Native27.panelWindows(pids: pids)
+            }
+            let before = panelWindows()
+            let pressed = icon.map { Native27.press($0, right: right) } ?? false
+            Self.log27.notice("点开 \(bundleID): 找到图标=\(icon != nil, privacy: .public) 点击成功=\(pressed, privacy: .public)")
+            if pressed {
+                self.message = "已点击 \(item.displayName)。"
+            } else {
+                self.message = "没能打开 \(item.displayName) 的菜单。"
+            }
+            guard wasHidden || self.nativeExpandedOverflow else { return }
+            // 等它的菜单或窗口关掉再收回：每秒看一次，最多 60 秒；只在临时放出期间运行。
+            try? await Task.sleep(for: .seconds(1))
+            for _ in 0..<60 {
+                if Task.isCancelled { return }
+                let opened = panelWindows().subtracting(before)
+                let mouseDown = CGEventSource.buttonState(.combinedSessionState, button: .left)
+                    || CGEventSource.buttonState(.combinedSessionState, button: .right)
+                if opened.isEmpty && !mouseDown { Self.log27.notice("面板已关，收回 \(bundleID)"); break }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            if Task.isCancelled { return }
+            self.nativeFinishTemporary()
+        }
+    }
+
+    private func nativeFinishTemporary() {
+        if nativeExpandedOverflow {
+            nativeExpandedOverflow = false
+            Native27.setOverflow(expanded: false)
+        }
+        guard nativeTemporary != nil else { return }
+        nativeTemporary = nil
+        nativeApply()
+        refresh()
+    }
+
+    private func nativeStop() {
+        nativeReturnTask?.cancel()
+        if nativeExpandedOverflow { nativeExpandedOverflow = false; Native27.setOverflow(expanded: false) }
+        nativeSeen = [:]
+        nativeTemporary = nil
+        // 关闭收纳或退出：放回本组件关掉的图标，用户的选择保留，下次启用再收起。
+        nativeApply(releaseAll: true)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
+        CFNotificationCenterRemoveEveryObserver(CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque())
+        isEnabled = false
+        isCollapsed = false
+        items = []
+        hiddenIDs = []
+        nativeIcons = [:]
+        publishSnapshot()
+        isStopping = false
+    }
+
+    /// 上次异常退出时留下的「本组件关掉的应用」先放回来（启动时调用，不论是否启用）。
+    public func releaseLeftoverNativeHides() {
+        guard native, !nativeRecorded.isEmpty, !isEnabled else { return }
+        nativeApply(releaseAll: true)
     }
 }
